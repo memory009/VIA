@@ -1,0 +1,9 @@
+{
+  "n_samples": 4,
+  "safe_count": 4,
+  "safety_rate": 1.0,
+  "avg_width_v": 0.26635938925000624,
+  "std_width_v": 0.17674222244334595,
+  "avg_width_omega": 0.19896081742093724,
+  "std_width_omega": 0.06397663368636229
+}
