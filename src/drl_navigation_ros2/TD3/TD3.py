@@ -71,6 +71,7 @@ class TD3(object):
         save_directory=Path("src/drl_navigation_ros2/models/TD3"),
         model_name="TD3",
         load_directory=Path("src/drl_navigation_ros2/models/TD3"),
+        run_id=None,  # 新增：运行ID用于TensorBoard日志
     ):
         # Initialize the Actor network
         self.device = device
@@ -88,7 +89,14 @@ class TD3(object):
         self.action_dim = action_dim
         self.max_action = max_action
         self.state_dim = state_dim
-        self.writer = SummaryWriter()
+        
+        # 使用run_id创建TensorBoard日志目录（与模型保存目录对应）
+        if run_id:
+            tensorboard_log_dir = f"runs/{run_id}"
+            self.writer = SummaryWriter(log_dir=tensorboard_log_dir)
+        else:
+            self.writer = SummaryWriter()  # 使用默认目录
+        
         self.iter_count = 0
         if load_model:
             self.load(filename=model_name, directory=load_directory)

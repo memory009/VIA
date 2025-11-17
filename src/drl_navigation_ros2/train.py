@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from pathlib import Path
+from datetime import datetime
+import socket
 
 from TD3.TD3 import TD3
 from SAC.SAC import SAC
@@ -14,6 +16,16 @@ from pretrain_utils import Pretraining
 
 def main(args=None):
     """Main training function"""
+    # 生成带时间戳的运行标识（与TensorBoard runs目录格式一致）
+    timestamp = datetime.now().strftime("%b%d_%H-%M-%S")
+    hostname = socket.gethostname()
+    run_id = f"{timestamp}_{hostname}"
+    
+    # 创建本次训练的模型保存目录
+    save_directory = Path("src/drl_navigation_ros2/models/TD3") / run_id
+    save_directory.mkdir(parents=True, exist_ok=True)
+    
+    # 训练参数配置
     action_dim = 2  # number of actions produced by the model
     max_action = 1  # maximum absolute value of output actions
     state_dim = 25  # number of input values in the neural network (vector length of state input)
@@ -36,6 +48,13 @@ def main(args=None):
         50  # number of training iterations to run during pre-training
     )
     save_every = 100  # save the model every n training cycles
+    
+    print("=" * 80)
+    print(f"🚀 开始新的训练运行")
+    print(f"📁 运行ID: {run_id}")
+    print(f"💾 模型保存路径: {save_directory}")
+    print(f"📊 TensorBoard日志: runs/{run_id}")
+    print("=" * 80)
 
     model = TD3(
         state_dim=state_dim,
@@ -44,6 +63,8 @@ def main(args=None):
         device=device,
         save_every=save_every,
         load_model=False,
+        save_directory=save_directory,  # 传入带时间戳的保存目录
+        run_id=run_id,  # 传入运行ID用于TensorBoard日志
     )  # instantiate a model
 
     ros = ROS_env(
