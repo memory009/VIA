@@ -23,6 +23,7 @@ class ROS_env:
         max_target_dist=8.0,
         target_reached_delta=0.5,
         collision_delta=0.4,
+        enable_random_obstacles=True,  # 控制是否在训练时生成随机障碍物
         args=None,
     ):
         rclpy.init(args=args)
@@ -45,6 +46,7 @@ class ROS_env:
         self.max_target_dist = max_target_dist
         self.target_reached_delta = target_reached_delta
         self.collision_delta = collision_delta
+        self.enable_random_obstacles = enable_random_obstacles
         self.target = self.set_target_position([0.0, 0.0])
 
     def step(self, lin_velocity=0.0, ang_velocity=0.1):
@@ -162,9 +164,11 @@ class ROS_env:
         rclpy.spin_once(self.robot_state_publisher)
 
     def set_positions(self):
-        for i in range(4, 8):
-            name = "obstacle" + str(i + 1)
-            self.set_random_position(name)
+        # 只在启用时生成随机障碍物
+        if self.enable_random_obstacles:
+            for i in range(4, 8):
+                name = "obstacle" + str(i + 1)
+                self.set_random_position(name)
 
         robot_position = self.set_robot_position()
         self.target = self.set_target_position(robot_position)

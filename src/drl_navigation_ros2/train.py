@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 from pathlib import Path
 
 from TD3.TD3 import TD3
@@ -35,7 +37,7 @@ def main(args=None):
     )
     save_every = 100  # save the model every n training cycles
 
-    model = SAC(
+    model = TD3(
         state_dim=state_dim,
         action_dim=action_dim,
         max_action=max_action,
@@ -44,9 +46,14 @@ def main(args=None):
         load_model=False,
     )  # instantiate a model
 
-    ros = ROS_env()  # instantiate ROS environment
+    ros = ROS_env(
+        enable_random_obstacles=False  # 训练和评估都只使用4个固定障碍物
+    )  # instantiate ROS environment
     eval_scenarios = record_eval_positions(
-        n_eval_scenarios=nr_eval_episodes
+        n_eval_scenarios=nr_eval_episodes,
+        save_to_file=True,  # Save eval scenarios to JSON file
+        random_seed=42,  # Use fixed seed for reproducibility across runs
+        enable_random_obstacles=False  # 实验阶段：禁用随机障碍物，只使用4个固定障碍物
     )  # save scenarios that will be used for evaluation
 
     if load_saved_buffer:
