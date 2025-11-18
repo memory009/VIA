@@ -18,6 +18,11 @@ from .polar_verifier import (
     verify_safety,
 )
 
+from .ray_casting import (  # 新增
+    ObstacleMap,
+    get_obstacle_map,
+)
+
 __all__ = [
     'TaylorModel',
     'TaylorArithmetic',
@@ -28,4 +33,6 @@ __all__ = [
     'compute_reachable_set',
     'check_action_safety',
     'verify_safety',
+    'ObstacleMap',  # 新增
+    'get_obstacle_map',  # 新增
 ]

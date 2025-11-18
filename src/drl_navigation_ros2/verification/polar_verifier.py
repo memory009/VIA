@@ -14,7 +14,7 @@ from .taylor_model import (
     compute_tm_bounds,
     apply_activation,
 )
-
+from .ray_casting import get_obstacle_map
 
 def extract_actor_weights(actor):
     """
@@ -158,44 +158,48 @@ def compute_reachable_set(
     return action_ranges
 
 
-def check_action_safety(action_ranges, state, collision_threshold=0.4):
+def check_action_safety(action_ranges, current_pose, current_laser, dt=0.1, collision_threshold=0.4):
     """
-    检查动作可达集是否安全
-    
-    安全条件：
-    1. 可达集宽度不能太大（不确定性约束）
-    2. 没有碰撞风险（根据激光雷达）
-    3. 动作在合理范围内
+    检查执行动作后的下一状态是否安全（完整版）
     
     Args:
         action_ranges: [[v_min, v_max], [ω_min, ω_max]]
-        state: 当前观测（前20维是激光雷达数据）
-        collision_threshold: 碰撞阈值（默认 0.4m）
+        current_pose: (x, y, θ) 当前位姿
+        current_laser: 当前激光雷达读数（20维，用于对比）
+        dt: 时间步长
+        collision_threshold: 碰撞阈值
     
     Returns:
         bool: 是否安全
     """
-    # 1. 不确定性检查
-    for i, (min_val, max_val) in enumerate(action_ranges):
-        range_width = max_val - min_val
-        if range_width > 1.5:  # 可达集太宽
-            return False
+    x, y, theta = current_pose
+    v_min, v_max = action_ranges[0]
+    omega_min, omega_max = action_ranges[1]
     
-    # 2. 碰撞风险检查（假设前20维是激光雷达）
-    if len(state) >= 20:
-        laser_readings = state[:20]
-        min_laser = np.min(laser_readings)
-        
-        if min_laser < collision_threshold:  # 距离障碍物很近
-            linear_vel_range = action_ranges[0]
-            if linear_vel_range[1] > 0.3:  # 可能前进
+    # 获取环境地图
+    obstacle_map = get_obstacle_map()
+    
+    # 检查所有边界情况（4个顶点）
+    for v in [v_min, v_max]:
+        for omega in [omega_min, omega_max]:
+            # 1. 传播到下一个位置（论文运动学模型）
+            v_real = v * 0.5  # TurtleBot3 实际速度缩放
+            x_next = x + dt * v_real * np.cos(theta)
+            y_next = y + dt * v_real * np.sin(theta)
+            theta_next = theta + omega * dt
+            
+            # 2. 预测下一步的激光雷达（关键！）
+            laser_next = obstacle_map.predict_laser_scan(x_next, y_next, theta_next)
+            
+            # 3. 碰撞检查
+            if np.min(laser_next) < collision_threshold:
                 return False
-    
-    # 3. 动作范围检查（根据你的训练代码：线速度 [0, 1], 角速度 [-1, 1]）
-    if action_ranges[0][0] < -1.1 or action_ranges[0][1] > 1.1:
-        return False
-    if action_ranges[1][0] < -1.1 or action_ranges[1][1] > 1.1:
-        return False
+            
+            # 4. 边界检查（机器人安全区域）
+            safe_zone = obstacle_map.boundary['robot_safe_zone']
+            if (x_next < safe_zone['x_min'] or x_next > safe_zone['x_max'] or
+                y_next < safe_zone['y_min'] or y_next > safe_zone['y_max']):
+                return False
     
     return True
 
