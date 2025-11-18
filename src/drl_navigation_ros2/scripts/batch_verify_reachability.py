@@ -6,7 +6,18 @@
 输出：assets/reachability_results.json
 """
 
+# Fix for distutils.version compatibility issue with tensorboard
 import sys
+try:
+    import distutils.version
+except AttributeError:
+    import distutils
+    from packaging import version as packaging_version
+    distutils.version = type('version', (), {
+        'LooseVersion': packaging_version.Version,
+        'StrictVersion': packaging_version.Version
+    })
+
 from pathlib import Path
 import numpy as np
 import torch
@@ -50,12 +61,6 @@ def verify_single_trajectory(
     sample_interval=10,
     verbose=False
 ):
-    """
-    验证单个轨迹的可达集
-    
-    Returns:
-        trajectory_results: dict
-    """
     states = trajectory_data['states']
     sampled_states = states[::sample_interval]
     
@@ -64,6 +69,12 @@ def verify_single_trajectory(
     
     for i, state in enumerate(sampled_states):
         step_idx = i * sample_interval
+        
+        # 添加：打印当前进度
+        print(f"\n  → 正在验证第 {i+1}/{len(sampled_states)} 个采样点 (步数={step_idx})...", end="", flush=True)
+        
+        import time
+        start = time.time()
         
         # 计算可达集
         is_safe, action_ranges = verify_safety(
@@ -74,41 +85,8 @@ def verify_single_trajectory(
             error_steps=4000,
         )
         
-        # 计算确定性动作
-        det_action = agent.get_action(state, add_noise=False)
-        
-        width_v = action_ranges[0][1] - action_ranges[0][0]
-        width_omega = action_ranges[1][1] - action_ranges[1][0]
-        
-        if is_safe:
-            safe_count += 1
-        
-        result = {
-            'step': step_idx,
-            'det_action': det_action.tolist(),
-            'action_ranges': action_ranges,
-            'is_safe': is_safe,
-            'width_v': float(width_v),
-            'width_omega': float(width_omega),
-            'min_laser': float(np.min(state[:20])),
-            'distance': float(state[20]),
-        }
-        results.append(result)
-    
-    # 统计
-    n_samples = len(sampled_states)
-    trajectory_summary = {
-        'n_samples': n_samples,
-        'safe_count': safe_count,
-        'safety_rate': safe_count / n_samples if n_samples > 0 else 0,
-        'collision': trajectory_data['collision'],
-        'goal_reached': trajectory_data['goal_reached'],
-        'steps': trajectory_data['steps'],
-        'total_reward': float(trajectory_data['total_reward']),
-        'results': results,
-    }
-    
-    return trajectory_summary
+        elapsed = time.time() - start
+        print(f" 完成 ({elapsed:.2f}s)", flush=True)  # 添加：打印耗时
 
 
 def main():
@@ -128,7 +106,7 @@ def main():
         device=device,
         load_model=True,
         model_name="TD3",
-        load_directory=Path("models/TD3/Nov17_06-22-08_archived"),
+        load_directory=project_root / "models" / "TD3" / "Nov17_06-22-08_archived",
     )
     print(f"  ✅ 模型加载成功 (设备: {device})")
     
