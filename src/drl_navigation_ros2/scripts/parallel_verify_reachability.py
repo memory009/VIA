@@ -52,20 +52,12 @@ def load_trajectories(pkl_path=None):
 
 def verify_single_trajectory_worker(args):
     """
-    单个轨迹的验证函数（用于并行）
-    
-    Args:
-        args: (trajectory_idx, trajectory_data, model_path, observation_error, sample_interval)
-    
-    Returns:
-        (trajectory_idx, trajectory_summary)
+    单个轨迹的验证函数（添加位姿支持）
     """
     trajectory_idx, trajectory_data, model_path, observation_error, sample_interval = args
     
-    # ===== 在每个进程中重新加载模型 =====
-    # 这是必须的，因为 PyTorch 模型不能跨进程共享
+    # 加载模型...
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
     agent = TD3(
         state_dim=25,
         action_dim=2,
@@ -76,9 +68,12 @@ def verify_single_trajectory_worker(args):
         load_directory=model_path,
     )
     
-    # ===== 提取状态并采样 =====
+    # ===== 提取状态和位姿并采样 =====
     states = trajectory_data['states']
+    poses = trajectory_data['poses']  # ← 新增
+    
     sampled_states = states[::sample_interval]
+    sampled_poses = poses[::sample_interval]  # ← 新增
     n_samples = len(sampled_states)
     
     print(f"[进程 {trajectory_idx+1}] 开始验证 {n_samples} 个采样点...")
@@ -87,28 +82,27 @@ def verify_single_trajectory_worker(args):
     safe_count = 0
     start_time = time.time()
     
-    # ===== 逐点验证 =====
-    for i, state in enumerate(sampled_states):
+    # ===== 逐点验证（添加位姿） =====
+    for i, (state, pose) in enumerate(zip(sampled_states, sampled_poses)):
         step_idx = i * sample_interval
         
-        # 每 1/4 进度打印一次
         if i % max(1, n_samples // 4) == 0:
             elapsed = time.time() - start_time
             print(f"[进程 {trajectory_idx+1}] 进度: {i+1}/{n_samples} "
                   f"({i/n_samples*100:.0f}%) | 已用时: {elapsed/60:.1f}分钟")
         
-        # 计算可达集（完全相同的逻辑）
+        # ← 修改：传递位姿
         is_safe, action_ranges = verify_safety(
             agent,
             state,
+            tuple(pose),  # ← 新增：(x, y, θ)
             observation_error=observation_error,
             bern_order=1,
-            error_steps=4000,  # ← 保持原始精度
+            error_steps=4000,
         )
         
-        # 计算确定性动作
+        # 后续处理不变...
         det_action = agent.get_action(state, add_noise=False)
-        
         width_v = action_ranges[0][1] - action_ranges[0][0]
         width_omega = action_ranges[1][1] - action_ranges[1][0]
         
@@ -117,6 +111,7 @@ def verify_single_trajectory_worker(args):
         
         result = {
             'step': step_idx,
+            'pose': pose.tolist(),  # ← 新增：保存位姿用于调试
             'det_action': det_action.tolist(),
             'action_ranges': action_ranges,
             'is_safe': is_safe,
@@ -127,9 +122,8 @@ def verify_single_trajectory_worker(args):
         }
         results.append(result)
     
-    # ===== 统计 =====
+    # 统计部分不变...
     elapsed_time = time.time() - start_time
-    
     trajectory_summary = {
         'trajectory_idx': trajectory_idx,
         'n_samples': n_samples,

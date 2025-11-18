@@ -207,20 +207,8 @@ def check_action_safety(action_ranges, current_pose, current_laser, dt=0.1, coll
 
 def verify_safety(agent, state, current_pose, observation_error=0.01, **kwargs):
     """
-    便捷接口：直接从 agent 对象验证安全性
-    
-    Args:
-        agent: TD3 对象（包含 actor 和 max_action）
-        state: 当前状态
-        current_pose: (x, y, θ) 当前位姿
-        observation_error: 观测误差
-        **kwargs: 传递给 compute_reachable_set 的其他参数
-    
-    Returns:
-        is_safe: bool
-        action_ranges: list of [min, max]
+    完整版：使用位姿进行光线投射验证
     """
-    # 从 agent 获取 max_action
     max_action = getattr(agent, 'max_action', 1.0)
     
     # 计算可达集
@@ -235,10 +223,10 @@ def verify_safety(agent, state, current_pose, observation_error=0.01, **kwargs):
     # 提取激光雷达数据
     current_laser = state[:20]
     
-    # 安全性判断（使用光线投射）
+    # 使用光线投射验证
     is_safe = check_action_safety(
         action_ranges, 
-        current_pose,
+        current_pose,  # (x, y, θ)
         current_laser
     )
     

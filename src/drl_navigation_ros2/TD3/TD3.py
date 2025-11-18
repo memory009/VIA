@@ -231,19 +231,20 @@ class TD3(object):
         )
 
     def load(self, filename, directory):
+        # ✅ 修改为：
         self.actor.load_state_dict(
-            torch.load("%s/%s_actor.pth" % (directory, filename))
+            torch.load("%s/%s_actor.pth" % (directory, filename), map_location=self.device)
         )
         self.actor_target.load_state_dict(
-            torch.load("%s/%s_actor_target.pth" % (directory, filename))
+            torch.load("%s/%s_actor_target.pth" % (directory, filename), map_location=self.device)
         )
         self.critic.load_state_dict(
-            torch.load("%s/%s_critic.pth" % (directory, filename))
+            torch.load("%s/%s_critic.pth" % (directory, filename), map_location=self.device)
         )
         self.critic_target.load_state_dict(
-            torch.load("%s/%s_critic_target.pth" % (directory, filename))
+            torch.load("%s/%s_critic_target.pth" % (directory, filename), map_location=self.device)
         )
-        print(f"Loaded weights from: {directory}")
+        print(f"Loaded weights from: {directory} to device: {self.device}")
 
     def prepare_state(self, latest_scan, distance, cos, sin, collision, goal, action):
         # update the returned data from ROS into a form used for learning in the current model

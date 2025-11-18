@@ -58,14 +58,12 @@ def load_eval_scenarios(json_path=None):
 
 def collect_single_trajectory(agent, env, scenario, max_steps=300):
     """
-    收集单个场景的轨迹
-    
-    Returns:
-        trajectory_data: dict 包含轨迹和元数据
+    收集单个场景的轨迹（添加位姿追踪）
     """
     trajectory = []
     actions = []
     rewards = []
+    poses = []  # ← 新增：保存每一步的位姿
     
     # 重置环境
     latest_scan, distance, cos, sin, collision, goal, a, reward = env.eval(scenario)
@@ -73,6 +71,9 @@ def collect_single_trajectory(agent, env, scenario, max_steps=300):
     # 记录初始信息
     robot_pos = (scenario[-2].x, scenario[-2].y, scenario[-2].angle)
     target_pos = (scenario[-1].x, scenario[-1].y)
+    
+    # ← 新增：初始位姿
+    current_pose = [robot_pos[0], robot_pos[1], robot_pos[2]]
     
     step_count = 0
     while step_count < max_steps:
@@ -82,6 +83,7 @@ def collect_single_trajectory(agent, env, scenario, max_steps=300):
         )
         trajectory.append(state)
         rewards.append(reward)
+        poses.append(current_pose.copy())  # ← 新增：保存当前位姿
         
         if terminal:
             break
@@ -90,6 +92,16 @@ def collect_single_trajectory(agent, env, scenario, max_steps=300):
         action = agent.get_action(state, add_noise=False)
         actions.append(action)
         a_in = [(action[0] + 1) / 2, action[1]]
+        
+        # ===== 新增：更新位姿估计 =====
+        dt = 0.1  # 时间步长（根据你的环境调整）
+        v = a_in[0] * 0.5  # 线速度（TurtleBot3 缩放）
+        omega = a_in[1]     # 角速度
+        
+        current_pose[0] += dt * v * np.cos(current_pose[2])  # x
+        current_pose[1] += dt * v * np.sin(current_pose[2])  # y
+        current_pose[2] += dt * omega                         # θ
+        # ===== 位姿更新结束 =====
         
         # 执行动作
         latest_scan, distance, cos, sin, collision, goal, a, reward = env.step(
@@ -103,6 +115,7 @@ def collect_single_trajectory(agent, env, scenario, max_steps=300):
         'states': np.array(trajectory),  # (T, 25)
         'actions': np.array(actions),     # (T-1, 2)
         'rewards': np.array(rewards),     # (T,)
+        'poses': np.array(poses),         # ← 新增：(T, 3) - (x, y, θ)
         'collision': collision,
         'goal_reached': goal,
         'steps': len(trajectory),
