@@ -16,6 +16,7 @@ from .taylor_model import (
 )
 from .ray_casting import get_obstacle_map
 
+
 def extract_actor_weights(actor):
     """
     提取 Actor 网络权重
@@ -204,13 +205,14 @@ def check_action_safety(action_ranges, current_pose, current_laser, dt=0.1, coll
     return True
 
 
-def verify_safety(agent, state, observation_error=0.01, **kwargs):
+def verify_safety(agent, state, current_pose, observation_error=0.01, **kwargs):
     """
     便捷接口：直接从 agent 对象验证安全性
     
     Args:
         agent: TD3 对象（包含 actor 和 max_action）
         state: 当前状态
+        current_pose: (x, y, θ) 当前位姿
         observation_error: 观测误差
         **kwargs: 传递给 compute_reachable_set 的其他参数
     
@@ -230,7 +232,14 @@ def verify_safety(agent, state, observation_error=0.01, **kwargs):
         **kwargs
     )
     
-    # 安全性判断
-    is_safe = check_action_safety(action_ranges, state)
+    # 提取激光雷达数据
+    current_laser = state[:20]
+    
+    # 安全性判断（使用光线投射）
+    is_safe = check_action_safety(
+        action_ranges, 
+        current_pose,
+        current_laser
+    )
     
     return is_safe, action_ranges
