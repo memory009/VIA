@@ -164,7 +164,7 @@ class BernsteinPolynomial:
             bern_poly = 1e-16 * x
         
         self.bern_poly = bern_poly
-        return sym.Poly(bern_poly)
+        return sym.Poly(bern_poly, x)
     
     def compute_error(self, a, b, activation_name):
         """
@@ -181,6 +181,7 @@ class BernsteinPolynomial:
         """
         epsilon = 0
         m = self.error_steps
+        x = sym.Symbol('x')
         
         for v in range(m + 1):
             # 采样点
@@ -193,7 +194,7 @@ class BernsteinPolynomial:
                 f_value = np.tanh(float(point))
             
             # Bernstein 多项式值
-            b_value = sym.Poly(self.bern_poly).eval(point)
+            b_value = sym.Poly(self.bern_poly, x).eval(point)
             
             # 更新最大误差
             temp_diff = abs(f_value - b_value)
@@ -301,7 +302,7 @@ def apply_activation(tm, bern_poly, bern_error, max_order):
                 temp *= composed.gens[j] ** monom[j]
             poly_truncated += composed.coeffs()[i] * temp
     
-    poly_truncated = sym.Poly(poly_truncated)
+    poly_truncated = sym.Poly(poly_truncated, *composed.gens) if composed.gens else sym.Poly(poly_truncated)
     
     # 3. 计算截断误差
     poly_remainder = composed - poly_truncated
