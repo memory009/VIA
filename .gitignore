@@ -146,3 +146,13 @@ tests/reports
 .ruff_cache
 /log/
 /install/
+
+# TensorBoard runs and training outputs
+runs/
+**/runs/
+
+# Training results and visualizations
+visualizations/
+**/visualizations/
+reachability_results*.json
+**/reachability_results*.json
