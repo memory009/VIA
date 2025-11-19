@@ -44,9 +44,17 @@ class Critic(nn.Module):
         self.layer_5 = nn.Linear(hidden_dim, hidden_dim)
         self.layer_6 = nn.Linear(hidden_dim, 1)
         
+        # 计算参数量
+        q1_params = (
+            sum(p.numel() for p in self.layer_1.parameters()) +
+            sum(p.numel() for p in self.layer_2.parameters()) +
+            sum(p.numel() for p in self.layer_3.parameters())
+        )
+        total_params = sum(p.numel() for p in self.parameters())
+        
         print(f"🔹 Critic网络(双Q): ({state_dim}+{action_dim}) → {hidden_dim} → {hidden_dim} → 1")
-        print(f"   单Q参数量: {sum(p.numel() for p in [self.layer_1, self.layer_2, self.layer_3]):,}")
-        print(f"   双Q总参数量: {sum(p.numel() for p in self.parameters()):,}")
+        print(f"   单Q参数量: {q1_params:,}")
+        print(f"   双Q总参数量: {total_params:,}")
 
     def forward(self, s, a):
         sa = torch.cat([s, a], 1)
