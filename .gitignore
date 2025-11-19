@@ -151,12 +151,6 @@ tests/reports
 runs/
 **/runs/
 
-# Trained models
-models/
-**/models/
-*.pth
-*.pt
-
 # Training results and visualizations
 visualizations/
 **/visualizations/
