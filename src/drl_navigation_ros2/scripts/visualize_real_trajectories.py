@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Visualize evaluation trajectories generated during verification.
+Visualize evaluation trajectories scene-by-scene.
 
 Data sources:
     - Trajectories:  src/drl_navigation_ros2/assets/trajectories_lightweight.pkl
-    - Obstacles:     src/drl_navigation_ros2/assets/obstacle_map.json
+    - Obstacles:     src/drl_navigation_ros2/assets/obstacle_map_scenario_XX.json
+                     (fallback: obstacle_map.json)
+    - Scenarios:     src/drl_navigation_ros2/assets/eval_scenarios.json
 
 Outputs:
-    1. visualizations/real_trajectories_combined.png        (all trajectories)
-    2. visualizations/real_trajectories/trajectory_XX.png   (individual plots)
+    - visualizations/real_trajectories/trajectory_sXX.png   (per scene)
 """
 
 import argparse
@@ -23,6 +24,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Circle, Rectangle
+
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -60,9 +62,17 @@ def load_obstacle_map(json_path: Path):
     return obstacle_map
 
 
+def load_eval_scenarios(path: Path):
+    if not path.exists():
+        return None
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
 def draw_obstacles(ax, obstacle_map):
     colors = {
         "fixed": ("#d9534f", 0.8),
+        "scenario_obstacle": ("#f0ad4e", 0.8),
         "seeded": ("#f0ad4e", 0.8),
         "boundary": ("#607d8b", 0.4),
     }
@@ -88,6 +98,7 @@ def draw_obstacles(ax, obstacle_map):
                 zorder=1,
             )
         else:  # box
+            yaw = obs.get("yaw", 0.0)
             patch = Rectangle(
                 (pos[0] - size[0] / 2, pos[1] - size[1] / 2),
                 width=size[0],
@@ -96,6 +107,7 @@ def draw_obstacles(ax, obstacle_map):
                 edgecolor="black",
                 linewidth=1.5,
                 alpha=alpha,
+                angle=np.degrees(yaw),
                 zorder=1,
             )
 
@@ -127,133 +139,74 @@ def format_axes(ax, obstacle_map, title):
     ax.set_ylim(boundary["y_min"] - 0.2, boundary["y_max"] + 0.2)
 
 
-def plot_combined(trajectories, obstacle_map, output_path):
-    fig, ax = plt.subplots(figsize=(10, 10))
+def plot_single_trajectory(idx, traj, obstacle_map, output_dir, scenario_id=None):
+    output_dir.mkdir(parents=True, exist_ok=True)
+    poses = np.array(traj["poses"])
+    color = plt.get_cmap("tab10")(idx % 10)
+
+    fig, ax = plt.subplots(figsize=(8, 8))
     draw_obstacles(ax, obstacle_map)
 
-    cmap = plt.get_cmap("tab10")
+    ax.plot(
+        poses[:, 0],
+        poses[:, 1],
+        color=color,
+        linewidth=3,
+        label="Trajectory",
+        zorder=5,
+    )
+    ax.scatter(
+        poses[0, 0],
+        poses[0, 1],
+        color="green",
+        edgecolor="white",
+        s=100,
+        marker="o",
+        label="Start",
+        zorder=6,
+    )
+    ax.scatter(
+        poses[-1, 0],
+        poses[-1, 1],
+        color="red",
+        edgecolor="black",
+        s=100,
+        marker="X",
+        label="End",
+        zorder=6,
+    )
+    target = traj["target_pos"]
+    ax.scatter(
+        target[0],
+        target[1],
+        color="gold",
+        edgecolor="black",
+        s=120,
+        marker="*",
+        label="Goal",
+        zorder=7,
+    )
 
-    for idx, traj in enumerate(trajectories):
-        poses = np.array(traj["poses"])
-        color = cmap(idx % 10)
-        status = "Success" if traj["goal_reached"] else "Incomplete"
-        label = f"Trajectory {idx+1:02d} ({status})"
+    target_circle = Circle(target, radius=0.3, fill=False, linestyle="--", color="green")
+    ax.add_patch(target_circle)
 
-        ax.plot(
-            poses[:, 0],
-            poses[:, 1],
-            color=color,
-            linewidth=2.5,
-            label=label,
-            zorder=5,
-        )
-        ax.scatter(
-            poses[0, 0],
-            poses[0, 1],
-            color=color,
-            edgecolor="white",
-            s=70,
-            marker="o",
-            zorder=6,
-        )
-        ax.scatter(
-            poses[-1, 0],
-            poses[-1, 1],
-            color=color,
-            edgecolor="black",
-            s=70,
-            marker="X",
-            zorder=6,
-        )
-        target = traj["target_pos"]
-        ax.scatter(
-            target[0],
-            target[1],
-            color=color,
-            edgecolor="black",
-            s=90,
-            marker="*",
-            zorder=7,
-        )
+    status = "Success" if traj["goal_reached"] else "Incomplete"
+    sid_text = f"S{scenario_id:02d}" if scenario_id is not None else f"Idx {idx+1:02d}"
+    title = f"Trajectory {sid_text} | Steps {traj['steps']} | {status}"
+    format_axes(ax, obstacle_map, title)
+    ax.legend(loc="upper right", fontsize=10, framealpha=0.95)
 
-    format_axes(ax, obstacle_map, "All 10 trajectories (combined view)")
-    ax.legend(loc="upper right", fontsize=9, framealpha=0.95, ncol=2)
     fig.tight_layout()
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    filename = f"trajectory_s{scenario_id:02d}.png" if scenario_id is not None else f"trajectory_{idx+1:02d}.png"
+    save_path = output_dir / "real_trajectories" / filename
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
-    print(f"[OK] Saved: {output_path}")
-
-
-def plot_individual(trajectories, obstacle_map, output_dir):
-    output_dir.mkdir(parents=True, exist_ok=True)
-    cmap = plt.get_cmap("tab10")
-
-    for idx, traj in enumerate(trajectories):
-        poses = np.array(traj["poses"])
-        color = cmap(idx % 10)
-
-        fig, ax = plt.subplots(figsize=(8, 8))
-        draw_obstacles(ax, obstacle_map)
-
-        ax.plot(
-            poses[:, 0],
-            poses[:, 1],
-            color=color,
-            linewidth=3,
-            label="Trajectory",
-            zorder=5,
-        )
-        ax.scatter(
-            poses[0, 0],
-            poses[0, 1],
-            color="green",
-            edgecolor="white",
-            s=100,
-            marker="o",
-            label="Start",
-            zorder=6,
-        )
-        ax.scatter(
-            poses[-1, 0],
-            poses[-1, 1],
-            color="red",
-            edgecolor="black",
-            s=100,
-            marker="X",
-            label="End",
-            zorder=6,
-        )
-        target = traj["target_pos"]
-        ax.scatter(
-            target[0],
-            target[1],
-            color="gold",
-            edgecolor="black",
-            s=120,
-            marker="*",
-            label="Goal",
-            zorder=7,
-        )
-
-        target_circle = Circle(target, radius=0.3, fill=False, linestyle="--", color="green")
-        ax.add_patch(target_circle)
-
-        status = "Success" if traj["goal_reached"] else "Incomplete"
-        title = f"Trajectory {idx+1:02d} | Steps {traj['steps']} | {status}"
-        format_axes(ax, obstacle_map, title)
-        ax.legend(loc="upper right", fontsize=10, framealpha=0.95)
-
-        fig.tight_layout()
-        save_path = output_dir / f"trajectory_{idx+1:02d}.png"
-        fig.savefig(save_path, dpi=300, bbox_inches="tight")
-        plt.close(fig)
-        print(f"  -> Saved individual plot: {save_path}")
+    print(f"  -> Saved scene plot: {save_path}")
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Visualize recorded evaluation trajectories")
+    parser = argparse.ArgumentParser(description="Visualize recorded evaluation trajectories (per scenario)")
     parser.add_argument(
         "--trajectories",
         type=Path,
@@ -267,10 +220,10 @@ def parse_args():
         help="Obstacle map (.json)",
     )
     parser.add_argument(
-        "--mode",
-        choices=["combined", "individual", "both"],
-        default="both",
-        help="Output mode: combined=single plot, individual=per-trajectory, both=all",
+        "--eval-scenarios",
+        type=Path,
+        default=ASSETS_DIR / "eval_scenarios.json",
+        help="Eval scenarios file (.json)",
     )
     parser.add_argument(
         "--output-dir",
@@ -285,15 +238,19 @@ def main():
     args = parse_args()
 
     trajectories = load_trajectories(args.trajectories)
-    obstacle_map = load_obstacle_map(args.obstacle_map)
+    scenarios_data = load_eval_scenarios(args.eval_scenarios)
+    scenarios = scenarios_data.get("scenarios", []) if scenarios_data else []
 
-    if args.mode in ("combined", "both"):
-        combined_path = args.output_dir / "real_trajectories_combined.png"
-        plot_combined(trajectories, obstacle_map, combined_path)
-
-    if args.mode in ("individual", "both"):
-        individuals_dir = args.output_dir / "real_trajectories"
-        plot_individual(trajectories, obstacle_map, individuals_dir)
+    for idx, traj in enumerate(trajectories):
+        scenario = scenarios[idx] if idx < len(scenarios) else None
+        scenario_id = scenario.get("scenario_id") if scenario else None
+        map_path = args.obstacle_map
+        if scenario_id is not None:
+            candidate = ASSETS_DIR / f"obstacle_map_scenario_{scenario_id:02d}.json"
+            if candidate.exists():
+                map_path = candidate
+        obstacle_map = load_obstacle_map(map_path)
+        plot_single_trajectory(idx, traj, obstacle_map, args.output_dir, scenario_id=scenario_id)
 
     print("\n[OK] Trajectory visualization finished.")
     print(f"[INFO] Output directory: {args.output_dir.resolve()}")

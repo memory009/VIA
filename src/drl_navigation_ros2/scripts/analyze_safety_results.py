@@ -9,6 +9,13 @@ from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
 
+
+def format_seconds(seconds: float) -> str:
+    """格式化秒数，便于阅读"""
+    minutes = seconds / 60
+    hours = seconds / 3600
+    return f"{minutes:.1f} 分钟 ({hours:.2f} 小时)"
+
 def analyze_safety_results(json_path=None):
     """分析安全验证结果"""
     if json_path is None:
@@ -21,19 +28,84 @@ def analyze_safety_results(json_path=None):
     print("🔍 可达集安全验证详细分析")
     print("="*70)
     
-    # 1. 总体统计
+    # 1. 总体统计 + 验证统计
     summary = data['summary']
+    metadata = data.get('metadata', {})
+    trajectories = data['trajectories']
+    
+    total_samples = summary['total_samples']
+    total_safe = summary['total_safe']
+    overall_safety_rate = summary['overall_safety_rate']
+    total_elapsed = metadata.get('elapsed_time', 0.0)
+    n_trajectories = metadata.get('n_trajectories', len(trajectories))
+    
     print(f"\n📊 总体统计:")
-    print(f"  总轨迹数: {data['metadata']['n_trajectories']}")
-    print(f"  总采样点: {summary['total_samples']}")
-    print(f"  总安全点: {summary['total_safe']}")
-    print(f"  整体安全率: {summary['overall_safety_rate']*100:.1f}%")
+    print(f"  总轨迹数: {n_trajectories}")
+    print(f"  总采样点: {total_samples}")
+    print(f"  总安全点: {total_safe}")
+    print(f"  整体安全率: {overall_safety_rate*100:.1f}%")
     print(f"  到达目标轨迹: {summary['goal_trajectories']}")
     print(f"  碰撞轨迹: {summary['collision_trajectories']}")
     
-    # 2. 按轨迹结果分类
-    trajectories = data['trajectories']
+    print(f"\n🧮 验证统计（整合自诊断脚本）:")
+    goal_trajectories = [traj for traj in trajectories if traj['goal_reached']]
+    collision_trajectories = [traj for traj in trajectories if traj['collision']]
     
+    print("\n整体可达集安全性:")
+    print(f"  总采样点: {total_samples}")
+    print(f"  安全点数: {total_safe}")
+    print(f"  安全率: {overall_safety_rate*100:.1f}%")
+    
+    print("\n按轨迹结果分类:")
+    print(f"  到达目标的轨迹: {len(goal_trajectories)}")
+    if goal_trajectories:
+        goal_safety = np.mean([traj['safety_rate'] for traj in goal_trajectories])
+        print(f"    平均安全率: {goal_safety*100:.1f}%")
+    print(f"  碰撞的轨迹: {len(collision_trajectories)}")
+    if collision_trajectories:
+        collision_safety = np.mean([traj['safety_rate'] for traj in collision_trajectories])
+        print(f"    平均安全率: {collision_safety*100:.1f}%")
+    
+    all_widths_v = [result['width_v'] for traj in trajectories for result in traj['results']]
+    all_widths_omega = [result['width_omega'] for traj in trajectories for result in traj['results']]
+    
+    print("\n可达集宽度统计:")
+    print("  线速度:")
+    print(f"    最小: {np.min(all_widths_v):.6f}")
+    print(f"    平均: {np.mean(all_widths_v):.6f}")
+    print(f"    中位数: {np.median(all_widths_v):.6f}")
+    print(f"    标准差: {np.std(all_widths_v):.6f}")
+    print(f"    最大: {np.max(all_widths_v):.6f}")
+    print(f"    95%分位: {np.percentile(all_widths_v, 95):.6f}")
+    
+    print("  角速度:")
+    print(f"    最小: {np.min(all_widths_omega):.6f}")
+    print(f"    平均: {np.mean(all_widths_omega):.6f}")
+    print(f"    中位数: {np.median(all_widths_omega):.6f}")
+    print(f"    标准差: {np.std(all_widths_omega):.6f}")
+    print(f"    最大: {np.max(all_widths_omega):.6f}")
+    print(f"    95%分位: {np.percentile(all_widths_omega, 95):.6f}")
+    
+    print("\n性能统计:")
+    print(f"  总耗时: {format_seconds(total_elapsed)}")
+    if n_trajectories:
+        print(f"  平均每轨迹: {total_elapsed / n_trajectories:.1f} 秒")
+    if total_samples:
+        print(f"  平均每采样点: {total_elapsed / total_samples:.2f} 秒")
+    
+    speedup = metadata.get('speedup')
+    n_workers = metadata.get('n_workers')
+    if speedup is not None:
+        print("\n并行加速:")
+        serial_time = total_elapsed * speedup if speedup else 0.0
+        if serial_time:
+            print(f"  串行预计耗时: {format_seconds(serial_time)}")
+        print(f"  并行实际耗时: {format_seconds(total_elapsed)}")
+        print(f"  加速比: {speedup:.1f}x")
+        if n_workers:
+            print(f"  并行效率: {speedup / n_workers * 100:.1f}%")
+    
+    # 2. 按轨迹结果分类
     goal_trajs = [t for t in trajectories if t['goal_reached']]
     collision_trajs = [t for t in trajectories if t['collision']]
     incomplete_trajs = [t for t in trajectories if not t['goal_reached'] and not t['collision']]

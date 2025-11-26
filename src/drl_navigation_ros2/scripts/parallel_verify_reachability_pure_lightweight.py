@@ -338,7 +338,7 @@ def main():
     
     print("\n[2/3] 准备并行计算...")
     
-    model_path = project_root / "models" / "TD3_lightweight" / "Nov19_01-37-30_cheeson"
+    model_path = project_root / "models" / "TD3_lightweight" / "Nov24_22-43-08_cheeson"
     observation_error = 0.01
     sample_interval = 1
     

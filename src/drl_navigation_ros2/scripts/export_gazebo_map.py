@@ -7,6 +7,7 @@
 import json
 import xml.etree.ElementTree as ET
 import numpy as np
+import math
 from pathlib import Path
 
 MODELS_DIR = (
@@ -78,6 +79,19 @@ def load_obstacle_specs(obstacle_names=None):
 OBSTACLE_SPECS = load_obstacle_specs()
 
 
+def load_eval_scenarios(path=None):
+    """
+    加载 eval_scenarios.json，如果不存在则返回 None
+    """
+    if path is None:
+        path = Path(__file__).parent.parent / "assets" / "eval_scenarios.json"
+    scenario_path = Path(path)
+    if not scenario_path.exists():
+        return None
+    with open(scenario_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
 def build_obstacle_entry(name, position, obs_type, yaw=None):
     """
     根据 SDF 规格构建障碍物条目
@@ -141,7 +155,7 @@ def generate_seeded_obstacles(
     return seeded_obstacles
 
 
-def export_obstacle_map():
+def export_obstacle_map(scenario=None):
     """
     导出 Gazebo 环境中的障碍物信息
     
@@ -162,14 +176,28 @@ def export_obstacle_map():
         for name, pos in fixed_positions
     ]
 
-    # ===== 种子固定（原随机）障碍物 =====
-    seeded_obstacles = generate_seeded_obstacles(
-        base_positions=[obs['position'][:] for obs in fixed_obstacles],
-        seed=42,
-        count=4,
-        min_dist=1.8,
-        area_limits=(-4.0, 4.0)
-    )
+    scenario_obstacles = []
+    scenario_id = None
+    if scenario is not None:
+        scenario_id = scenario.get("scenario_id")
+        for element in scenario.get("elements", []):
+            name = element.get("name", "")
+            if name.startswith("obstacle"):
+                suffix = name.replace("obstacle", "")
+                if suffix.isdigit() and int(suffix) >= 5:
+                    pos = [element.get("x", 0.0), element.get("y", 0.0)]
+                    yaw = element.get("angle")
+                    entry = build_obstacle_entry(name, pos, obs_type="scenario_obstacle", yaw=yaw)
+                    entry["scenario_id"] = scenario_id
+                    scenario_obstacles.append(entry)
+    else:
+        scenario_obstacles = generate_seeded_obstacles(
+            base_positions=[obs['position'][:] for obs in fixed_obstacles],
+            seed=42,
+            count=4,
+            min_dist=1.8,
+            area_limits=(-4.0, 4.0)
+        )
     
     # ===== 环境边界 =====
     # 从 ros_python.py 第116-127行：机器人活动范围 [-4.0, 4.0] x [-4.0, 4.0]
@@ -221,10 +249,10 @@ def export_obstacle_map():
     ]
     
     # ===== 合并所有障碍物 =====
-    all_obstacles = fixed_obstacles + seeded_obstacles + boundary_walls
+    all_obstacles = fixed_obstacles + scenario_obstacles + boundary_walls
     counts = {
         'fixed': len(fixed_obstacles),
-        'seeded': len(seeded_obstacles),
+        'scenario_obstacles': len(scenario_obstacles),
         'boundary': len(boundary_walls)
     }
 
@@ -236,21 +264,28 @@ def export_obstacle_map():
             'laser_range': 3.5,  # TurtleBot3 激光雷达最大范围
             'laser_beams': 20,   # 使用的激光束数量
             'laser_fov': 180,    # 视野角度（度）
-            'seeded_obstacles': {
-                'seed': 42,
-                'count': len(seeded_obstacles),
-                'min_distance': 1.8,
-                'area': {
-                    'x_range': [-4.0, 4.0],
-                    'y_range': [-4.0, 4.0]
-                }
-            }
         },
         'boundary': boundary,
         'obstacles': all_obstacles,
         'counts': counts,
         'total_obstacles': len(all_obstacles)
     }
+    if scenario is None:
+        obstacle_map['metadata']['seeded_obstacles'] = {
+            'seed': 42,
+            'count': len(scenario_obstacles),
+            'min_distance': 1.8,
+            'area': {
+                'x_range': [-4.0, 4.0],
+                'y_range': [-4.0, 4.0]
+            }
+        }
+    else:
+        obstacle_map['metadata']['scenario'] = {
+            'scenario_id': scenario_id,
+            'elements': len(scenario.get("elements", [])),
+            'source': 'eval_scenarios.json'
+        }
     
     return obstacle_map
 
@@ -405,14 +440,14 @@ def predict_laser_scan(robot_pos, robot_yaw, obstacle_map, n_beams=20):
     return np.array(laser_scan)
 
 
-def save_obstacle_map(output_path=None):
+def save_obstacle_map(output_path=None, scenario=None):
     """
     保存障碍物地图到JSON文件
     """
     if output_path is None:
         output_path = Path(__file__).parent.parent / "assets" / "obstacle_map.json"
     
-    obstacle_map = export_obstacle_map()
+    obstacle_map = export_obstacle_map(scenario=scenario)
     
     # 添加一些示例预测
     examples = []
@@ -444,10 +479,12 @@ def save_obstacle_map(output_path=None):
     print(f"✅ 障碍物地图已保存到: {output_path}")
     print(f"\n地图信息:")
     counts = obstacle_map.get('counts', {})
-    seeded_meta = obstacle_map['metadata'].get('seeded_obstacles', {})
     print(f"  - 固定障碍物: {counts.get('fixed', 0)}个")
-    print(f"  - 种子障碍物: {counts.get('seeded', 0)}个 (seed={seeded_meta.get('seed')})")
-    print(f"  - 边界墙壁: {counts.get('boundary', 0)}个")
+    if scenario is None:
+        seeded_meta = obstacle_map['metadata'].get('seeded_obstacles', {})
+        print(f"  - 种子障碍物: {counts.get('scenario_obstacles', 0)}个 (seed={seeded_meta.get('seed')})")
+    else:
+        print(f"  - 场景障碍物: {counts.get('scenario_obstacles', 0)}个 (scenario={scenario.get('scenario_id')})")
     print(f"  - 环境大小: 10x10 米")
     print(f"  - 机器人活动范围: 8x8 米")
     
@@ -456,16 +493,23 @@ def save_obstacle_map(output_path=None):
         if obs['type'] == 'fixed':
             print(f"  - {obs['name']}: {obs['position']}")
     
-    print(f"\nSeed={seeded_meta.get('seed')} 障碍物位置:")
-    for obs in obstacle_map['obstacles']:
-        if obs['type'] == 'seeded':
-            print(f"  - {obs['name']}: {obs['position']} (yaw={obs['yaw']:.3f} rad)")
+    if scenario is None:
+        seeded_meta = obstacle_map['metadata'].get('seeded_obstacles', {})
+        print(f"\nSeed={seeded_meta.get('seed')} 障碍物位置:")
+        for obs in obstacle_map['obstacles']:
+            if obs['type'] == 'scenario_obstacle':
+                print(f"  - {obs['name']}: {obs['position']} (yaw={obs['yaw']:.3f} rad)")
+    else:
+        print(f"\nScenario {scenario.get('scenario_id')} 障碍物位置:")
+        for obs in obstacle_map['obstacles']:
+            if obs['type'] == 'scenario_obstacle':
+                print(f"  - {obs['name']}: {obs['position']} (yaw={obs.get('yaw', 0):.3f} rad)")
     
     print(f"\n示例激光雷达预测:")
     for ex in examples:
         print(f"  位置 {ex['position']}, 朝向 {ex['yaw_deg']:.1f}°: min_laser = {ex['min_laser']:.3f}m")
     
-    return output_path
+    return obstacle_map
 
 
 def visualize_map(obstacle_map=None, save_path=None):
@@ -492,7 +536,7 @@ def visualize_map(obstacle_map=None, save_path=None):
         if obs['type'] == 'fixed':
             color = 'red'
             alpha = 0.7
-        elif obs['type'] == 'seeded':
+        elif obs['type'] == 'scenario_obstacle':
             color = 'orange'
             alpha = 0.7
         else:  # boundary
@@ -510,15 +554,18 @@ def visualize_map(obstacle_map=None, save_path=None):
                 alpha=alpha
             )
         else:
+            yaw = obs.get('yaw', 0.0)
+            angle_deg = math.degrees(yaw)
             patch = patches.Rectangle(
                 (pos[0] - size[0]/2, pos[1] - size[1]/2),
                 size[0], size[1],
-                linewidth=2, edgecolor='black', facecolor=color, alpha=alpha
+                linewidth=2, edgecolor='black', facecolor=color, alpha=alpha,
+                angle=angle_deg
             )
         ax.add_patch(patch)
 
         # 添加标签（固定与种子障碍物）
-        if obs['type'] in {'fixed', 'seeded'}:
+        if obs['type'] in {'fixed', 'scenario_obstacle'}:
             ax.text(
                 pos[0],
                 pos[1],
@@ -548,7 +595,7 @@ def visualize_map(obstacle_map=None, save_path=None):
     ax.set_title('Gazebo Environment - Obstacle Map')
     legend_handles = [
         patches.Patch(facecolor='red', edgecolor='black', alpha=0.7, label='Fixed Obstacles'),
-        patches.Patch(facecolor='orange', edgecolor='black', alpha=0.7, label='Seeded Obstacles (seed=42)'),
+        patches.Patch(facecolor='orange', edgecolor='black', alpha=0.7, label='Scenario Obstacles'),
         patches.Patch(facecolor='gray', edgecolor='black', alpha=0.5, label='Boundary Walls'),
         patches.Patch(facecolor='none', edgecolor='green', linestyle='--', label='Robot Safe Zone')
     ]
@@ -570,14 +617,29 @@ def main():
     print("=" * 70)
     print("🗺️  Gazebo 环境地图导出工具")
     print("=" * 70)
+    eval_data = load_eval_scenarios()
+    if eval_data and eval_data.get("enable_random_obstacles"):
+        print("\n检测到 eval_scenarios 中启用了随机障碍，将为每个场景生成独立地图...")
+        vis_dir = Path(__file__).parent.parent / "visualizations" / "obstacle_map"
+        vis_dir.mkdir(parents=True, exist_ok=True)
+        for scenario in eval_data.get("scenarios", []):
+            scenario_id = scenario.get("scenario_id", 0)
+            json_path = Path(__file__).parent.parent / "assets" / f"obstacle_map_scenario_{scenario_id:02d}.json"
+            png_path = vis_dir / f"obstacle_map_scenario_{scenario_id:02d}.png"
+            obstacle_map = save_obstacle_map(output_path=json_path, scenario=scenario)
+            print("\n" + "-" * 60)
+            print(f"🎨 生成场景 {scenario_id} 地图可视化...")
+            visualize_map(obstacle_map=obstacle_map, save_path=png_path)
+        print("\n" + "=" * 70)
+        print("✅ 所有场景地图已生成！")
+        print(f"地图目录: src/drl_navigation_ros2/assets/obstacle_map_scenario_XX.json")
+        print(f"可视化目录: src/drl_navigation_ros2/visualizations/obstacle_map/obstacle_map_scenario_XX.png")
+        print("=" * 70)
+        return
     
-    # 1. 导出并保存地图
-    output_path = save_obstacle_map()
-    
-    # 2. 可视化地图
+    obstacle_map = save_obstacle_map()
     print("\n" + "=" * 70)
     print("🎨 生成地图可视化...")
-    obstacle_map = export_obstacle_map()
     visualize_map(obstacle_map)
     
     print("\n" + "=" * 70)

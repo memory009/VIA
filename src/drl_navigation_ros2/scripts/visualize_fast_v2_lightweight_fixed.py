@@ -159,7 +159,7 @@ def visualize_single_trajectory(traj_idx, trajectory_data, verification_result,
                         color='lightgreen', alpha=0.03, linewidth=0.3, zorder=1)
         
         # ✅ 标记采样点（现在应该在轨迹上了）
-        if step_idx % (step_interval * 3) == 0:
+        if step_idx % (step_interval * 1) == 0:
             ax_main.plot(pos[0], pos[1], 'o', color='orange', 
                         markersize=6, alpha=0.6, zorder=8)
         
