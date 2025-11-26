@@ -100,7 +100,7 @@ def main(args=None):
     )
 
     ros = ROS_env(
-        enable_random_obstacles=True  # 训练和评估都只使用4个固定障碍物+4个随机障碍物
+        enable_random_obstacles=True  # 训练使用4个固定障碍物+4个随机障碍物，评估使用4个固定障碍物+4个固定seed的障碍物
     )
     eval_scenarios = record_eval_positions(
         n_eval_scenarios=nr_eval_episodes,

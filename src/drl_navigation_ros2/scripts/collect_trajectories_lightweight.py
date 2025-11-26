@@ -2,7 +2,7 @@
 """
 轨迹收集脚本
 在本地 Gazebo 环境中运行，收集所有评估场景的轨迹
-输出：保存到 assets/trajectories.pkl
+输出：保存到 assets/trajectories_lightweight.pkl
 """
 
 import sys
@@ -159,7 +159,7 @@ def main():
         device=device,
         load_model=True,
         model_name="TD3_lightweight_best",  # ← 加载 best 版本
-        load_directory=Path("models/TD3_lightweight/Nov19_01-37-30_cheeson"),
+        load_directory=Path("models/TD3_lightweight/Nov24_22-43-08_cheeson"),
     )
     print(f"  ✅ 模型加载成功")
     
