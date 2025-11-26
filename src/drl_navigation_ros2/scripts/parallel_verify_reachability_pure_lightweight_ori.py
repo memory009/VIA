@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-并行可达性验证脚本 - 纯POLAR版本 (TD3_lightweight) - 修正版
-与训练代码完全对齐
+并行可达性验证脚本 - 纯POLAR版本 (TD3_lightweight)
+移除光线投射，完全遵循论文方法
+使用轻量级网络加速计算
 """
 
 import sys
@@ -26,6 +27,7 @@ from multiprocessing import Pool, cpu_count
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+# ← 修改1: 导入轻量级TD3
 from TD3.TD3_lightweight import TD3 as TD3_Lightweight
 
 
@@ -70,6 +72,7 @@ def compute_reachable_set_pure_polar(
     
     # 自动检测隐藏层维度
     hidden_dim = weights[0].shape[0]
+    # print(f"[POLAR] 检测到网络结构: {state_dim} → {hidden_dim} → {hidden_dim} → 2")
     
     # 2. 创建符号变量
     z_symbols = [sym.Symbol(f'z{i}') for i in range(state_dim)]
@@ -150,64 +153,31 @@ def compute_reachable_set_pure_polar(
     return action_ranges
 
 
-def check_action_safety_training_aligned(action_ranges, state):
+def check_action_safety_simple(action_ranges, state):
     """
-    ✅ 与论文完全对齐的安全检查
-    
-    论文方法（Section IV-A, Fig. 2, Remark 1）：
-    1. Safe set = collision-free intervals
-    2. 检查可达集宽度（不确定性指标）
-    3. 检查可达集是否与碰撞区域相交
-    4. 不检查动作范围（POLAR的数值扩张不是物理风险）
-    
-    参考文献：
-    - Dong et al., "Reachability Verification Based Reliability Assessment 
-      for Deep Reinforcement Learning Controlled Robotics and Autonomous Systems"
-    - IEEE RA-L, 2024
+    简单的安全性检查 - 与clearpath_rl_polar一致
+    只基于可达集宽度和激光雷达数据
     """
-    # ===== 参数（与训练代码对齐）=====
-    COLLISION_DELTA = 0.4      # ros_python.py: check_collision()
-    SAFETY_MARGIN = 0.05       # 验证时的保守裕度
-    DT = 0.1                   # ros_python.py: time.sleep(0.1)
+    # 1. 检查可达集宽度
+    for i, (min_val, max_val) in enumerate(action_ranges):
+        range_width = max_val - min_val
+        if range_width > 1.5:
+            return False
     
-    # ===== 可达集宽度阈值（基于实际分布）=====
-    # 从诊断结果：95%分位为 0.429 (linear), 0.309 (angular)
-    # 论文建议：保守地使用稍高于95%分位的值
-    MAX_WIDTH_LINEAR = 0.5
-    MAX_WIDTH_ANGULAR = 0.4
-    
-    # 1. 提取环境信息
-    laser_readings = state[0:20]  # 完整的20个激光
+    # 2. 检查碰撞风险（基于激光雷达）
+    laser_readings = state[2:10]  # 8个激光数据（已归一化）
     min_laser = np.min(laser_readings)
     
-    # 2. 检查可达集宽度（论文：不确定性指标）
-    width_linear = action_ranges[0][1] - action_ranges[0][0]
-    width_angular = action_ranges[1][1] - action_ranges[1][0]
+    if min_laser < 0.05:  # 很近的障碍物
+        linear_vel_range = action_ranges[0]
+        if linear_vel_range[1] > 0.3:  # 可能前进
+            return False
     
-    if width_linear > MAX_WIDTH_LINEAR:
-        return False  # 不确定性过高
-    if width_angular > MAX_WIDTH_ANGULAR:
-        return False  # 不确定性过高
-    
-    # 3. 检查碰撞风险（论文核心）
-    safe_distance = COLLISION_DELTA + SAFETY_MARGIN
-    
-    if min_laser < safe_distance:
-        # 映射到实际物理速度
-        # 训练时：a_in[0] = (action[0] + 1) / 2
-        actual_v_max = (action_ranges[0][1] + 1) / 2
-        
-        if actual_v_max > 0.05:
-            # 预测dt后的距离
-            predicted_min_distance = min_laser - actual_v_max * DT
-            
-            # 论文定义的不安全状态：碰撞
-            if predicted_min_distance < COLLISION_DELTA:
-                return False
-    
-    # 4. 论文中不检查动作范围
-    # 理由：POLAR的Taylor Model会产生数值扩张，
-    #       这是保守估计的正常现象，不代表物理上的不安全
+    # 3. 检查动作范围
+    if action_ranges[0][0] < -0.6 or action_ranges[0][1] > 0.6:
+        return False
+    if action_ranges[1][0] < -1.1 or action_ranges[1][1] > 1.1:
+        return False
     
     return True
 
@@ -216,16 +186,16 @@ def verify_single_trajectory_worker(args):
     """单个轨迹的验证函数（纯POLAR + lightweight版本）"""
     trajectory_idx, trajectory_data, model_path, observation_error, sample_interval = args
     
-    # 加载轻量级模型
+    # ← 修改2: 加载轻量级模型
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     agent = TD3_Lightweight(
         state_dim=25,
         action_dim=2,
         max_action=1.0,
         device=device,
-        hidden_dim=26,
+        hidden_dim=26,  # ← 轻量级网络的隐藏层维度
         load_model=True,
-        model_name="TD3_lightweight_best",
+        model_name="TD3_lightweight_best",  # ← 轻量级模型名称
         load_directory=model_path,
     )
     
@@ -237,7 +207,7 @@ def verify_single_trajectory_worker(args):
     sampled_poses = poses[::sample_interval]
     n_samples = len(sampled_states)
     
-    print(f"[进程 {trajectory_idx+1}] 开始验证 {n_samples} 个采样点（修正版）...")
+    print(f"[进程 {trajectory_idx+1}] 开始验证 {n_samples} 个采样点（纯POLAR-Lightweight）...")
     
     results = []
     safe_count = 0
@@ -251,7 +221,7 @@ def verify_single_trajectory_worker(args):
             print(f"[进程 {trajectory_idx+1}] 进度: {i+1}/{n_samples} "
                   f"({i/n_samples*100:.0f}%) | 已用时: {elapsed/60:.1f}分钟")
         
-        # 计算可达集
+        # 纯POLAR计算可达集
         action_ranges = compute_reachable_set_pure_polar(
             agent.actor,
             state,
@@ -261,8 +231,8 @@ def verify_single_trajectory_worker(args):
             max_action=1.0,
         )
         
-        # ✅ 使用修正后的安全检查
-        is_safe = check_action_safety_training_aligned(action_ranges, state)
+        # 简单安全性检查
+        is_safe = check_action_safety_simple(action_ranges, state)
         
         det_action = agent.get_action(state, add_noise=False)
         width_v = action_ranges[0][1] - action_ranges[0][0]
@@ -279,7 +249,7 @@ def verify_single_trajectory_worker(args):
             'is_safe': is_safe,
             'width_v': float(width_v),
             'width_omega': float(width_omega),
-            'min_laser': float(np.min(state[0:20])),  # ✅ 修正：完整激光
+            'min_laser': float(np.min(state[:20])),
             'distance': float(state[20]),
         }
         results.append(result)
@@ -307,6 +277,7 @@ def verify_single_trajectory_worker(args):
 def load_trajectories(pkl_path=None):
     """加载保存的轨迹"""
     if pkl_path is None:
+        # ← 修改3: 使用lightweight的轨迹文件
         pkl_path = Path(__file__).parent.parent / "assets" / "trajectories_lightweight.pkl"
     
     if not pkl_path.exists():
@@ -322,7 +293,7 @@ def load_trajectories(pkl_path=None):
 def main():
     """主函数"""
     print("\n" + "="*70)
-    print("🚀 纯POLAR并行验证工具 (TD3_Lightweight) - 修正版")
+    print("🚀 纯POLAR并行验证工具 (TD3_Lightweight)")
     print("="*70)
     
     n_cores = cpu_count()
@@ -338,6 +309,7 @@ def main():
     
     print("\n[2/3] 准备并行计算...")
     
+    # ← 修改4: 使用lightweight模型路径
     model_path = project_root / "models" / "TD3_lightweight" / "Nov19_01-37-30_cheeson"
     observation_error = 0.01
     sample_interval = 1
@@ -348,7 +320,6 @@ def main():
     print(f"  并行进程数: {n_workers}")
     print(f"  观测误差: ±{observation_error}")
     print(f"  采样间隔: 每 {sample_interval} 步")
-    print(f"  ✅ 修正：激光索引 state[0:20]，动作映射 (action+1)/2，宽度阈值 0.5/0.4")
     
     args_list = [
         (i, traj, model_path, observation_error, sample_interval)
@@ -402,7 +373,7 @@ def main():
         collision_safety = np.mean([r['safety_rate'] for r in collision_trajectories])
         print(f"    平均安全率: {collision_safety*100:.1f}%")
     
-    # ===== ✅ 修正：增强的可达集宽度统计（加上最小值）=====
+    # 可达集宽度统计
     all_widths_v = []
     all_widths_omega = []
     
@@ -413,20 +384,14 @@ def main():
     
     print(f"\n可达集宽度统计:")
     print(f"  线速度:")
-    print(f"    最小: {np.min(all_widths_v):.6f}")  # ✅ 新增
     print(f"    平均: {np.mean(all_widths_v):.6f}")
-    print(f"    中位数: {np.median(all_widths_v):.6f}")  # ✅ 新增
     print(f"    标准差: {np.std(all_widths_v):.6f}")
     print(f"    最大: {np.max(all_widths_v):.6f}")
-    print(f"    95%分位: {np.percentile(all_widths_v, 95):.6f}")  # ✅ 新增（验证阈值设置）
     
     print(f"  角速度:")
-    print(f"    最小: {np.min(all_widths_omega):.6f}")  # ✅ 新增
     print(f"    平均: {np.mean(all_widths_omega):.6f}")
-    print(f"    中位数: {np.median(all_widths_omega):.6f}")  # ✅ 新增
     print(f"    标准差: {np.std(all_widths_omega):.6f}")
     print(f"    最大: {np.max(all_widths_omega):.6f}")
-    print(f"    95%分位: {np.percentile(all_widths_omega, 95):.6f}")  # ✅ 新增（验证阈值设置）
     
     print(f"\n性能统计:")
     print(f"  总耗时: {total_elapsed/60:.1f} 分钟 ({total_elapsed/3600:.2f} 小时)")
@@ -444,12 +409,12 @@ def main():
     print(f"  加速比: {speedup:.1f}x")
     print(f"  并行效率: {speedup/n_workers*100:.1f}%")
     
-    # 保存结果
-    output_path = Path(__file__).parent.parent / "assets" / "reachability_results_pure_polar_lightweight.json"
+    # ← 修改5: 保存到lightweight专用文件
+    output_path = Path(__file__).parent.parent / "assets" / "reachability_results_pure_polar_lightweight_ori.json"
     
     output_data = {
         'metadata': {
-            'method': 'pure_polar_paper_aligned',  # ✅ 修正：更准确的描述
+            'method': 'pure_polar',
             'model': 'TD3_lightweight',
             'hidden_dim': 26,
             'n_trajectories': n_trajectories,
@@ -462,19 +427,6 @@ def main():
             'n_cores': n_cores,
             'elapsed_time': total_elapsed,
             'speedup': speedup,
-            'safety_thresholds': {  # ✅ 新增：记录使用的阈值
-                'max_width_linear': 0.5,
-                'max_width_angular': 0.4,
-                'collision_delta': 0.4,
-                'safety_margin': 0.05,
-            },
-            'fixes': [
-                'Laser index corrected: state[0:20] instead of state[2:10]',
-                'Action mapping added: (action+1)/2 for linear velocity',
-                'Collision threshold aligned: 0.4m from ros_python.py',
-                'Width thresholds adjusted: 0.5/0.4 (based on 95th percentile)',
-                'Action range check removed: POLAR numerical expansion is normal'
-            ]
         },
         'summary': {
             'overall_safety_rate': overall_safety_rate,
@@ -482,25 +434,6 @@ def main():
             'total_samples': total_samples,
             'goal_trajectories': len(goal_trajectories),
             'collision_trajectories': len(collision_trajectories),
-            # ✅ 新增：宽度统计摘要
-            'width_statistics': {
-                'linear': {
-                    'min': float(np.min(all_widths_v)),
-                    'mean': float(np.mean(all_widths_v)),
-                    'median': float(np.median(all_widths_v)),
-                    'std': float(np.std(all_widths_v)),
-                    'max': float(np.max(all_widths_v)),
-                    'p95': float(np.percentile(all_widths_v, 95)),
-                },
-                'angular': {
-                    'min': float(np.min(all_widths_omega)),
-                    'mean': float(np.mean(all_widths_omega)),
-                    'median': float(np.median(all_widths_omega)),
-                    'std': float(np.std(all_widths_omega)),
-                    'max': float(np.max(all_widths_omega)),
-                    'p95': float(np.percentile(all_widths_omega, 95)),
-                },
-            },
         },
         'trajectories': all_results,
     }
@@ -517,13 +450,8 @@ def main():
         raise
     
     print("="*70)
-    print("\n🎉 纯POLAR验证完成（论文对齐版）！")
-    print(f"💡 关键修正:")
-    print(f"   1. 激光数据: state[0:20] (完整20个)")
-    print(f"   2. 动作映射: (action+1)/2 for 线速度")
-    print(f"   3. 碰撞阈值: 0.4m (与训练一致)")
-    print(f"   4. 宽度阈值: 0.5/0.4 (适配轻量级网络，基于95%分位)")  # ✅ 修正
-    print(f"   5. 移除动作范围检查 (POLAR数值扩张是正常现象)")  # ✅ 新增
+    print("\n🎉 纯POLAR验证完成（Lightweight版本）！")
+    print(f"💡 提示: 轻量级网络参数量减少约99.8%，计算速度更快")
 
 
 if __name__ == "__main__":
