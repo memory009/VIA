@@ -173,21 +173,21 @@ def check_action_safety_training_aligned(action_ranges, state):
     # ===== 可达集宽度阈值（基于实际分布）=====
     # 从诊断结果：95%分位为 0.429 (linear), 0.309 (angular)
     # 论文建议：保守地使用稍高于95%分位的值
-    MAX_WIDTH_LINEAR = 0.5
-    MAX_WIDTH_ANGULAR = 0.4
+    # MAX_WIDTH_LINEAR = 0.5
+    # MAX_WIDTH_ANGULAR = 0.4
     
     # 1. 提取环境信息
     laser_readings = state[0:20]  # 完整的20个激光
     min_laser = np.min(laser_readings)
     
-    # 2. 检查可达集宽度（论文：不确定性指标）
-    width_linear = action_ranges[0][1] - action_ranges[0][0]
-    width_angular = action_ranges[1][1] - action_ranges[1][0]
+    # # 2. 检查可达集宽度（论文：不确定性指标）
+    # width_linear = action_ranges[0][1] - action_ranges[0][0]
+    # width_angular = action_ranges[1][1] - action_ranges[1][0]
     
-    if width_linear > MAX_WIDTH_LINEAR:
-        return False  # 不确定性过高
-    if width_angular > MAX_WIDTH_ANGULAR:
-        return False  # 不确定性过高
+    # if width_linear > MAX_WIDTH_LINEAR:
+    #     return False  # 不确定性过高
+    # if width_angular > MAX_WIDTH_ANGULAR:
+    #     return False  # 不确定性过高
     
     # 3. 检查碰撞风险（论文核心）
     safe_distance = COLLISION_DELTA + SAFETY_MARGIN
@@ -413,7 +413,7 @@ def main():
     
     print(f"\n可达集宽度统计:")
     print(f"  线速度:")
-    print(f"    最小: {np.min(all_widths_v):.6f}")  # ✅ 新增
+    print(f"    最小: {np.min(all_widths_v):.6f}")  
     print(f"    平均: {np.mean(all_widths_v):.6f}")
     print(f"    中位数: {np.median(all_widths_v):.6f}")  # ✅ 新增
     print(f"    标准差: {np.std(all_widths_v):.6f}")
@@ -421,7 +421,7 @@ def main():
     print(f"    95%分位: {np.percentile(all_widths_v, 95):.6f}")  # ✅ 新增（验证阈值设置）
     
     print(f"  角速度:")
-    print(f"    最小: {np.min(all_widths_omega):.6f}")  # ✅ 新增
+    print(f"    最小: {np.min(all_widths_omega):.6f}")  
     print(f"    平均: {np.mean(all_widths_omega):.6f}")
     print(f"    中位数: {np.median(all_widths_omega):.6f}")  # ✅ 新增
     print(f"    标准差: {np.std(all_widths_omega):.6f}")
@@ -463,8 +463,8 @@ def main():
             'elapsed_time': total_elapsed,
             'speedup': speedup,
             'safety_thresholds': {  # ✅ 新增：记录使用的阈值
-                'max_width_linear': 0.5,
-                'max_width_angular': 0.4,
+                # 'max_width_linear': 0.5,
+                # 'max_width_angular': 0.4,
                 'collision_delta': 0.4,
                 'safety_margin': 0.05,
             },
@@ -522,8 +522,6 @@ def main():
     print(f"   1. 激光数据: state[0:20] (完整20个)")
     print(f"   2. 动作映射: (action+1)/2 for 线速度")
     print(f"   3. 碰撞阈值: 0.4m (与训练一致)")
-    print(f"   4. 宽度阈值: 0.5/0.4 (适配轻量级网络，基于95%分位)")  # ✅ 修正
-    print(f"   5. 移除动作范围检查 (POLAR数值扩张是正常现象)")  # ✅ 新增
 
 
 if __name__ == "__main__":
