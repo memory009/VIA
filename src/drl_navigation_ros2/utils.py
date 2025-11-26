@@ -49,7 +49,14 @@ def set_random_position(name, element_positions):
     return eval_element
 
 
-def record_eval_positions(n_eval_scenarios=10, save_to_file=True, random_seed=None, enable_random_obstacles=True):
+def record_eval_positions(
+    n_eval_scenarios=10,
+    save_to_file=True,
+    random_seed=None,
+    enable_random_obstacles=True,
+    n_random_obstacles=4,
+    save_filename="eval_scenarios.json",
+):
     """
     Generate evaluation scenarios with random positions for obstacles, robot, and target.
     
@@ -57,8 +64,9 @@ def record_eval_positions(n_eval_scenarios=10, save_to_file=True, random_seed=No
         n_eval_scenarios: Number of scenarios to generate
         save_to_file: Whether to save scenarios to a JSON file
         random_seed: Random seed for reproducibility (None for random)
-        enable_random_obstacles: Whether to include 4 random obstacles (obstacle5-8). 
-                                If False, only uses 4 fixed obstacles for easier training.
+        enable_random_obstacles: Whether to include additional random obstacles (starting from obstacle5)
+        n_random_obstacles: How many random obstacles to create (ignored if enable_random_obstacles=False)
+        save_filename: Name of the JSON file to write (stored under assets/)
     
     Returns:
         List of scenarios, each containing position data for all elements
@@ -71,9 +79,10 @@ def record_eval_positions(n_eval_scenarios=10, save_to_file=True, random_seed=No
         eval_scenario = []
         element_positions = [[-2.93, 3.17], [2.86, -3.0], [-2.77, -0.96], [2.83, 2.93]]
         
-        # 可选：添加4个随机障碍物
+        # 可选：添加指定数量的随机障碍物
         if enable_random_obstacles:
-            for i in range(4, 8):
+            total_random = max(0, n_random_obstacles)
+            for i in range(4, 4 + total_random):
                 name = "obstacle" + str(i + 1)
                 eval_element = set_random_position(name, element_positions)
                 eval_scenario.append(eval_element)
@@ -88,7 +97,7 @@ def record_eval_positions(n_eval_scenarios=10, save_to_file=True, random_seed=No
 
     # Save scenarios to file
     if save_to_file:
-        save_path = Path(__file__).parent / "assets" / "eval_scenarios.json"
+        save_path = Path(__file__).parent / "assets" / save_filename
         save_path.parent.mkdir(parents=True, exist_ok=True)
         
         scenarios_dict = {
@@ -96,14 +105,14 @@ def record_eval_positions(n_eval_scenarios=10, save_to_file=True, random_seed=No
             'random_seed': random_seed,
             'min_distance': 1.8,
             'enable_random_obstacles': enable_random_obstacles,
-            'n_obstacles': 8 if enable_random_obstacles else 4,
+            'n_obstacles': 4 + n_random_obstacles if enable_random_obstacles else 4,
             'scenarios': []
         }
         
         for idx, scenario in enumerate(scenarios):
             # 机器人和目标的索引取决于是否启用随机障碍物
-            robot_idx = 4 if enable_random_obstacles else 0
-            target_idx = 5 if enable_random_obstacles else 1
+            robot_idx = n_random_obstacles if enable_random_obstacles else 0
+            target_idx = robot_idx + 1
             
             scenario_dict = {
                 'scenario_id': idx,
@@ -119,8 +128,12 @@ def record_eval_positions(n_eval_scenarios=10, save_to_file=True, random_seed=No
         print(f"✅ Evaluation scenarios saved to: {save_path}")
         print(f"   - Number of scenarios: {n_eval_scenarios}")
         print(f"   - Random seed: {random_seed if random_seed else 'None (random)'}")
-        print(f"   - Random obstacles: {'Enabled (4 random + 4 fixed)' if enable_random_obstacles else 'Disabled (4 fixed only)'}")
-        print(f"   - Total obstacles per scenario: {8 if enable_random_obstacles else 4}")
+        if enable_random_obstacles:
+            print(f"   - Random obstacles: Enabled (4 fixed + {n_random_obstacles} random)")
+            print(f"   - Total obstacles per scenario: {4 + n_random_obstacles}")
+        else:
+            print("   - Random obstacles: Disabled (4 fixed only)")
+            print("   - Total obstacles per scenario: 4")
         print(f"   - Min distance between elements: 1.8m")
 
     return scenarios

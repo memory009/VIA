@@ -91,5 +91,21 @@
       <uri>model://obstacle8</uri>
     </include>
 
+    <include>
+      <uri>model://obstacle9</uri>
+    </include>
+
+    <include>
+      <uri>model://obstacle10</uri>
+    </include>
+
+    <include>
+      <uri>model://obstacle11</uri>
+    </include>
+
+    <include>
+      <uri>model://obstacle12</uri>
+    </include>
+
   </world>
 </sdf>
