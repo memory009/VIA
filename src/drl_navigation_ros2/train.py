@@ -100,13 +100,13 @@ def main(args=None):
     )
 
     ros = ROS_env(
-        enable_random_obstacles=False  # 训练和评估都只使用4个固定障碍物
+        enable_random_obstacles=True  # 训练和评估都只使用4个固定障碍物+4个随机障碍物
     )
     eval_scenarios = record_eval_positions(
         n_eval_scenarios=nr_eval_episodes,
         save_to_file=True,
         random_seed=42,
-        enable_random_obstacles=False
+        enable_random_obstacles=True
     )
 
     if load_saved_buffer:
