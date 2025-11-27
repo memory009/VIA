@@ -307,7 +307,7 @@ def verify_single_trajectory_worker(args):
 def load_trajectories(pkl_path=None):
     """加载保存的轨迹"""
     if pkl_path is None:
-        pkl_path = Path(__file__).parent.parent / "assets" / "trajectories_lightweight.pkl"
+        pkl_path = Path(__file__).parent.parent / "assets" / "trajectories_lightweight_12.pkl"
     
     if not pkl_path.exists():
         raise FileNotFoundError(f"轨迹文件不存在: {pkl_path}")
@@ -445,7 +445,7 @@ def main():
     print(f"  并行效率: {speedup/n_workers*100:.1f}%")
     
     # 保存结果
-    output_path = Path(__file__).parent.parent / "assets" / "reachability_results_pure_polar_lightweight.json"
+    output_path = Path(__file__).parent.parent / "assets" / "reachability_results_pure_polar_lightweight_12.json"
     
     output_data = {
         'metadata': {

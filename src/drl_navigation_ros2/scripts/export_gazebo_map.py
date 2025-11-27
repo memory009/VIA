@@ -79,17 +79,36 @@ def load_obstacle_specs(obstacle_names=None):
 OBSTACLE_SPECS = load_obstacle_specs()
 
 
+def _resolve_scenario_tag(scenario_path: Path) -> str:
+    """根据文件名推断场景标签（例如 eval_scenarios_12 -> 12）"""
+    stem = scenario_path.stem
+    parts = stem.split("_")
+    for part in reversed(parts):
+        if part.isdigit():
+            return part
+    return stem
+
+
 def load_eval_scenarios(path=None):
     """
-    加载 eval_scenarios.json，如果不存在则返回 None
+    加载 eval_scenarios JSON，并返回 (data, scenario_tag)
+    scenario_tag 根据文件名推断，用于输出目录划分
     """
     if path is None:
-        path = Path(__file__).parent.parent / "assets" / "eval_scenarios.json"
+        path = (
+            Path(__file__).parent.parent
+            / "assets"
+            / "eval_scenarios_12.json"
+        )
+
     scenario_path = Path(path)
+    scenario_tag = _resolve_scenario_tag(scenario_path)
+
     if not scenario_path.exists():
-        return None
+        return None, scenario_tag
+
     with open(scenario_path, "r", encoding="utf-8") as f:
-        return json.load(f)
+        return json.load(f), scenario_tag
 
 
 def build_obstacle_entry(name, position, obs_type, yaw=None):
@@ -440,12 +459,15 @@ def predict_laser_scan(robot_pos, robot_yaw, obstacle_map, n_beams=20):
     return np.array(laser_scan)
 
 
-def save_obstacle_map(output_path=None, scenario=None):
+def save_obstacle_map(output_path=None, scenario=None, scenario_tag=None):
     """
     保存障碍物地图到JSON文件
     """
     if output_path is None:
-        output_path = Path(__file__).parent.parent / "assets" / "obstacle_map.json"
+        assets_dir = Path(__file__).parent.parent / "assets"
+        if scenario_tag:
+            assets_dir = assets_dir / f"eval_scenarios_{scenario_tag}"
+        output_path = assets_dir / "obstacle_map.json"
     
     obstacle_map = export_obstacle_map(scenario=scenario)
     
@@ -512,7 +534,7 @@ def save_obstacle_map(output_path=None, scenario=None):
     return obstacle_map
 
 
-def visualize_map(obstacle_map=None, save_path=None):
+def visualize_map(obstacle_map=None, save_path=None, scenario_tag=None):
     """
     可视化障碍物地图（可选）
     """
@@ -602,7 +624,11 @@ def visualize_map(obstacle_map=None, save_path=None):
     ax.legend(handles=legend_handles, loc='upper right')
     
     if save_path is None:
-        save_path = Path(__file__).parent.parent / "visualizations" / "obstacle_map.png"
+        vis_dir = Path(__file__).parent.parent / "visualizations"
+        if scenario_tag:
+            save_path = vis_dir / f"obstacle_{scenario_tag}_map" / "obstacle_map.png"
+        else:
+            save_path = vis_dir / "obstacle_map.png"
     
     save_path = Path(save_path)
     save_path.parent.mkdir(parents=True, exist_ok=True)
@@ -617,36 +643,74 @@ def main():
     print("=" * 70)
     print("🗺️  Gazebo 环境地图导出工具")
     print("=" * 70)
-    eval_data = load_eval_scenarios()
+    eval_data, scenario_tag = load_eval_scenarios()
+    base_dir = Path(__file__).parent.parent
+    assets_dir = base_dir / "assets"
+    visuals_dir = base_dir / "visualizations"
+
+    if scenario_tag:
+        assets_dir = assets_dir / f"eval_scenarios_{scenario_tag}"
+        vis_dir = visuals_dir / f"obstacle_{scenario_tag}_map"
+    else:
+        vis_dir = visuals_dir / "obstacle_map"
+
     if eval_data and eval_data.get("enable_random_obstacles"):
         print("\n检测到 eval_scenarios 中启用了随机障碍，将为每个场景生成独立地图...")
-        vis_dir = Path(__file__).parent.parent / "visualizations" / "obstacle_map"
         vis_dir.mkdir(parents=True, exist_ok=True)
+        assets_dir.mkdir(parents=True, exist_ok=True)
         for scenario in eval_data.get("scenarios", []):
             scenario_id = scenario.get("scenario_id", 0)
-            json_path = Path(__file__).parent.parent / "assets" / f"obstacle_map_scenario_{scenario_id:02d}.json"
+            json_path = assets_dir / f"obstacle_map_scenario_{scenario_id:02d}.json"
             png_path = vis_dir / f"obstacle_map_scenario_{scenario_id:02d}.png"
-            obstacle_map = save_obstacle_map(output_path=json_path, scenario=scenario)
+            obstacle_map = save_obstacle_map(
+                output_path=json_path,
+                scenario=scenario,
+                scenario_tag=scenario_tag,
+            )
             print("\n" + "-" * 60)
             print(f"🎨 生成场景 {scenario_id} 地图可视化...")
-            visualize_map(obstacle_map=obstacle_map, save_path=png_path)
+            visualize_map(
+                obstacle_map=obstacle_map,
+                save_path=png_path,
+                scenario_tag=scenario_tag,
+            )
         print("\n" + "=" * 70)
         print("✅ 所有场景地图已生成！")
-        print(f"地图目录: src/drl_navigation_ros2/assets/obstacle_map_scenario_XX.json")
-        print(f"可视化目录: src/drl_navigation_ros2/visualizations/obstacle_map/obstacle_map_scenario_XX.png")
+        asset_hint = (
+            f"src/drl_navigation_ros2/assets/eval_scenarios_{scenario_tag}/obstacle_map_scenario_XX.json"
+            if scenario_tag
+            else "src/drl_navigation_ros2/assets/obstacle_map_scenario_XX.json"
+        )
+        vis_hint = (
+            f"src/drl_navigation_ros2/visualizations/obstacle_{scenario_tag}_map/obstacle_map_scenario_XX.png"
+            if scenario_tag
+            else "src/drl_navigation_ros2/visualizations/obstacle_map/obstacle_map_scenario_XX.png"
+        )
+        print(f"地图目录: {asset_hint}")
+        print(f"可视化目录: {vis_hint}")
         print("=" * 70)
         return
     
-    obstacle_map = save_obstacle_map()
+    obstacle_map = save_obstacle_map(scenario_tag=scenario_tag)
     print("\n" + "=" * 70)
     print("🎨 生成地图可视化...")
-    visualize_map(obstacle_map)
+    visualize_map(obstacle_map, scenario_tag=scenario_tag)
     
     print("\n" + "=" * 70)
     print("✅ 完成！")
     print("\n使用方法:")
-    print("  1. 地图数据: src/drl_navigation_ros2/assets/obstacle_map.json")
-    print("  2. 可视化: src/drl_navigation_ros2/visualizations/obstacle_map.png")
+    asset_default = (
+        f"src/drl_navigation_ros2/assets/eval_scenarios_{scenario_tag}/obstacle_map.json"
+        if scenario_tag
+        else "src/drl_navigation_ros2/assets/obstacle_map.json"
+    )
+    vis_default = (
+        f"src/drl_navigation_ros2/visualizations/obstacle_{scenario_tag}_map/obstacle_map.png"
+        if scenario_tag
+        else "src/drl_navigation_ros2/visualizations/obstacle_map.png"
+    )
+    print(f"  1. 地图数据: {asset_default}")
+    print(f"  2. 可视化: {vis_default}")
     print("\n在代码中使用:")
     print("  >>> from scripts.export_gazebo_map import predict_laser_scan")
     print("  >>> laser = predict_laser_scan((0, 0), 0.0, obstacle_map)")
