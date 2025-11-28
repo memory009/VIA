@@ -30,7 +30,17 @@ def load_obstacle_specs(obstacle_names=None):
     直接从 Gazebo model.sdf 解析障碍物几何信息，确保尺寸与仿真一致
     """
     if obstacle_names is None:
-        obstacle_names = [f"obstacle{i}" for i in range(1, 9)]
+        obstacle_names = []
+        for path in MODELS_DIR.iterdir():
+            if path.is_dir() and path.name.startswith("obstacle"):
+                obstacle_names.append(path.name)
+        if not obstacle_names:
+            obstacle_names = [f"obstacle{i}" for i in range(1, 13)]
+        else:
+            def _sort_key(name):
+                suffix = name.replace("obstacle", "")
+                return int(suffix) if suffix.isdigit() else float("inf")
+            obstacle_names = sorted(obstacle_names, key=_sort_key)
 
     specs = {}
     for name in obstacle_names:
@@ -541,6 +551,7 @@ def visualize_map(obstacle_map=None, save_path=None, scenario_tag=None):
     try:
         import matplotlib.pyplot as plt
         import matplotlib.patches as patches
+        from matplotlib.transforms import Affine2D
     except ImportError:
         print("⚠️  需要 matplotlib 进行可视化，跳过")
         return
@@ -578,11 +589,17 @@ def visualize_map(obstacle_map=None, save_path=None, scenario_tag=None):
         else:
             yaw = obs.get('yaw', 0.0)
             angle_deg = math.degrees(yaw)
+            transform = (
+                Affine2D()
+                .rotate_deg(angle_deg)
+                .translate(pos[0], pos[1])
+                + ax.transData
+            )
             patch = patches.Rectangle(
-                (pos[0] - size[0]/2, pos[1] - size[1]/2),
+                (-size[0] / 2, -size[1] / 2),
                 size[0], size[1],
                 linewidth=2, edgecolor='black', facecolor=color, alpha=alpha,
-                angle=angle_deg
+                transform=transform
             )
         ax.add_patch(patch)
 

@@ -152,65 +152,45 @@ def compute_reachable_set_pure_polar(
 
 def check_action_safety_training_aligned(action_ranges, state):
     """
-    ✅ 与论文完全对齐的安全检查
+    ✅ 与论文和作者代码完全对齐的安全检查
     
-    论文方法（Section IV-A, Fig. 2, Remark 1）：
-    1. Safe set = collision-free intervals
-    2. 检查可达集宽度（不确定性指标）
-    3. 检查可达集是否与碰撞区域相交
-    4. 不检查动作范围（POLAR的数值扩张不是物理风险）
+    基于作者 main.py 的区间计算逻辑：
+    - 使用 Taylor Model 上界作为保守估计
+    - 区间算术计算最坏情况位移
+    - 基于当前激光检查碰撞风险
     
-    参考文献：
-    - Dong et al., "Reachability Verification Based Reliability Assessment 
-      for Deep Reinforcement Learning Controlled Robotics and Autonomous Systems"
-    - IEEE RA-L, 2024
+    参考：
+    - 作者代码：main.py (Line 14-26)
+    - 论文：Section IV-A, Fig. 2, Remark 1
     """
     # ===== 参数（与训练代码对齐）=====
     COLLISION_DELTA = 0.4      # ros_python.py: check_collision()
     SAFETY_MARGIN = 0.05       # 验证时的保守裕度
     DT = 0.1                   # ros_python.py: time.sleep(0.1)
     
-    # ===== 可达集宽度阈值（基于实际分布）=====
-    # 从诊断结果：95%分位为 0.429 (linear), 0.309 (angular)
-    # 论文建议：保守地使用稍高于95%分位的值
-    # MAX_WIDTH_LINEAR = 0.5
-    # MAX_WIDTH_ANGULAR = 0.4
-    
-    # 1. 提取环境信息
-    laser_readings = state[0:20]  # 完整的20个激光
+    # ===== 1. 提取环境信息 =====
+    laser_readings = state[0:20]
     min_laser = np.min(laser_readings)
     
-    # # 2. 检查可达集宽度（论文：不确定性指标）
-    # width_linear = action_ranges[0][1] - action_ranges[0][0]
-    # width_angular = action_ranges[1][1] - action_ranges[1][0]
+    # ===== 2. 动作可达集（POLAR计算的区间）=====
+    v_interval = action_ranges[0]  # [v_min, v_max]
     
-    # if width_linear > MAX_WIDTH_LINEAR:
-    #     return False  # 不确定性过高
-    # if width_angular > MAX_WIDTH_ANGULAR:
-    #     return False  # 不确定性过高
+    # ===== 3. 映射到实际控制空间 =====
+    # 对应训练代码：a_in[0] = (action[0] + 1) / 2
+    v_actual_max = (v_interval[1] + 1) / 2
     
-    # 3. 检查碰撞风险（论文核心）
-    safe_distance = COLLISION_DELTA + SAFETY_MARGIN
+    # ===== 4. 保守估计：最坏情况位移（使用上界）=====
+    # 对应作者代码：b = constant + sum(newlist[0:-1]) + TMI_temp[1]
+    max_displacement = v_actual_max * DT
     
-    if min_laser < safe_distance:
-        # 映射到实际物理速度
-        # 训练时：a_in[0] = (action[0] + 1) / 2
-        actual_v_max = (action_ranges[0][1] + 1) / 2
-        
-        if actual_v_max > 0.05:
-            # 预测dt后的距离
-            predicted_min_distance = min_laser - actual_v_max * DT
-            
-            # 论文定义的不安全状态：碰撞
-            if predicted_min_distance < COLLISION_DELTA:
-                return False
+    # ===== 5. 碰撞检查 =====
+    predicted_min_distance = min_laser - max_displacement
+    safe_threshold = COLLISION_DELTA + SAFETY_MARGIN
     
-    # 4. 论文中不检查动作范围
-    # 理由：POLAR的Taylor Model会产生数值扩张，
-    #       这是保守估计的正常现象，不代表物理上的不安全
+    if predicted_min_distance < safe_threshold:
+        return False  # 不安全：可达集可能导致碰撞
     
-    return True
-
+    return True  # 安全：所有可能轨迹都不会碰撞
 
 def verify_single_trajectory_worker(args):
     """单个轨迹的验证函数（纯POLAR + lightweight版本）"""

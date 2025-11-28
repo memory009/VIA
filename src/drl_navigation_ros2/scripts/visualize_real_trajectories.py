@@ -24,6 +24,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Circle, Rectangle
+from matplotlib.transforms import Affine2D
 
 
 
@@ -121,16 +122,22 @@ def draw_obstacles(ax, obstacle_map):
             )
         else:  # box
             yaw = obs.get("yaw", 0.0)
+            transform = (
+                Affine2D()
+                .rotate_deg(np.degrees(yaw))
+                .translate(pos[0], pos[1])
+                + ax.transData
+            )
             patch = Rectangle(
-                (pos[0] - size[0] / 2, pos[1] - size[1] / 2),
+                (-size[0] / 2, -size[1] / 2),
                 width=size[0],
                 height=size[1],
                 facecolor=color,
                 edgecolor="black",
                 linewidth=1.5,
                 alpha=alpha,
-                angle=np.degrees(yaw),
                 zorder=1,
+                transform=transform,
             )
 
         ax.add_patch(patch)
