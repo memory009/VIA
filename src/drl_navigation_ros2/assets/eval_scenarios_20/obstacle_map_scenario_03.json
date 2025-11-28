@@ -1,0 +1,522 @@
+{
+  "metadata": {
+    "environment": "turtlebot3_drl",
+    "world_size": "10x10 meters",
+    "robot_model": "turtlebot3_waffle",
+    "laser_range": 3.5,
+    "laser_beams": 20,
+    "laser_fov": 180,
+    "scenario": {
+      "scenario_id": 3,
+      "elements": 18,
+      "source": "eval_scenarios.json"
+    }
+  },
+  "boundary": {
+    "x_min": -5.0,
+    "x_max": 5.0,
+    "y_min": -5.0,
+    "y_max": 5.0,
+    "robot_safe_zone": {
+      "x_min": -4.0,
+      "x_max": 4.0,
+      "y_min": -4.0,
+      "y_max": 4.0
+    }
+  },
+  "obstacles": [
+    {
+      "name": "obstacle1",
+      "position": [
+        -2.93,
+        3.17
+      ],
+      "type": "fixed",
+      "shape": "box",
+      "size": [
+        0.3,
+        0.7,
+        1.0
+      ],
+      "height": 1.0
+    },
+    {
+      "name": "obstacle2",
+      "position": [
+        2.86,
+        -3.0
+      ],
+      "type": "fixed",
+      "shape": "box",
+      "size": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "height": 1.0
+    },
+    {
+      "name": "obstacle3",
+      "position": [
+        -2.77,
+        -0.96
+      ],
+      "type": "fixed",
+      "shape": "box",
+      "size": [
+        0.25,
+        0.25,
+        1.0
+      ],
+      "height": 1.0
+    },
+    {
+      "name": "obstacle4",
+      "position": [
+        2.83,
+        2.93
+      ],
+      "type": "fixed",
+      "shape": "box",
+      "size": [
+        2.0,
+        1.5,
+        1.0
+      ],
+      "height": 1.0
+    },
+    {
+      "name": "obstacle5",
+      "position": [
+        -0.12381611847182938,
+        0.9460381722423676
+      ],
+      "type": "scenario_obstacle",
+      "shape": "cylinder",
+      "size": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "height": 1.0,
+      "yaw": -0.8138477806110567,
+      "radius": 0.5,
+      "scenario_id": 3
+    },
+    {
+      "name": "obstacle6",
+      "position": [
+        -3.706534376875217,
+        -1.980504445247834
+      ],
+      "type": "scenario_obstacle",
+      "shape": "cylinder",
+      "size": [
+        0.5,
+        0.5,
+        1.0
+      ],
+      "height": 1.0,
+      "yaw": -0.8236398938268534,
+      "radius": 0.25,
+      "scenario_id": 3
+    },
+    {
+      "name": "obstacle7",
+      "position": [
+        3.1616547014975946,
+        0.093419536925329
+      ],
+      "type": "scenario_obstacle",
+      "shape": "box",
+      "size": [
+        0.7,
+        0.2,
+        1.0
+      ],
+      "height": 1.0,
+      "yaw": 1.3405149833226693,
+      "scenario_id": 3
+    },
+    {
+      "name": "obstacle8",
+      "position": [
+        0.2609381316401853,
+        -2.0602359709221627
+      ],
+      "type": "scenario_obstacle",
+      "shape": "cylinder",
+      "size": [
+        1.5,
+        1.5,
+        1.0
+      ],
+      "height": 1.0,
+      "yaw": 0.20177497878135942,
+      "radius": 0.75,
+      "scenario_id": 3
+    },
+    {
+      "name": "obstacle9",
+      "position": [
+        -0.9817266951630188,
+        -3.839430417778189
+      ],
+      "type": "scenario_obstacle",
+      "shape": "cylinder",
+      "size": [
+        0.0249566,
+        0.0249566,
+        1.0
+      ],
+      "height": 1.0,
+      "yaw": -1.4498875408310825,
+      "radius": 0.0124783,
+      "scenario_id": 3
+    },
+    {
+      "name": "obstacle10",
+      "position": [
+        -3.3046376953006105,
+        0.2968523345483822
+      ],
+      "type": "scenario_obstacle",
+      "shape": "box",
+      "size": [
+        0.1,
+        0.999999,
+        1.0
+      ],
+      "height": 1.0,
+      "yaw": -1.1179095726489061,
+      "scenario_id": 3
+    },
+    {
+      "name": "obstacle11",
+      "position": [
+        1.96351579347464,
+        -0.5467236301625649
+      ],
+      "type": "scenario_obstacle",
+      "shape": "box",
+      "size": [
+        0.7,
+        0.2,
+        1.0
+      ],
+      "height": 1.0,
+      "yaw": 0.5456388368078362,
+      "scenario_id": 3
+    },
+    {
+      "name": "obstacle12",
+      "position": [
+        1.1673379306528098,
+        0.5662264373512951
+      ],
+      "type": "scenario_obstacle",
+      "shape": "box",
+      "size": [
+        0.7,
+        0.2,
+        1.0
+      ],
+      "height": 1.0,
+      "yaw": -2.3399819695791844,
+      "scenario_id": 3
+    },
+    {
+      "name": "obstacle13",
+      "position": [
+        -2.102185666112044,
+        -3.18574021903677
+      ],
+      "type": "scenario_obstacle",
+      "shape": "box",
+      "size": [
+        0.7,
+        0.2,
+        1.0
+      ],
+      "height": 1.0,
+      "yaw": -0.904170937493689,
+      "scenario_id": 3
+    },
+    {
+      "name": "obstacle14",
+      "position": [
+        -0.7168253840827079,
+        3.859028935268851
+      ],
+      "type": "scenario_obstacle",
+      "shape": "box",
+      "size": [
+        0.7,
+        0.2,
+        1.0
+      ],
+      "height": 1.0,
+      "yaw": -2.1811503561986787,
+      "scenario_id": 3
+    },
+    {
+      "name": "obstacle15",
+      "position": [
+        1.349145759395448,
+        3.4350079130206863
+      ],
+      "type": "scenario_obstacle",
+      "shape": "box",
+      "size": [
+        0.7,
+        0.2,
+        1.0
+      ],
+      "height": 1.0,
+      "yaw": -2.4376314696549555,
+      "scenario_id": 3
+    },
+    {
+      "name": "obstacle16",
+      "position": [
+        -1.4105661087660506,
+        -0.5965084910686658
+      ],
+      "type": "scenario_obstacle",
+      "shape": "box",
+      "size": [
+        0.7,
+        0.2,
+        1.0
+      ],
+      "height": 1.0,
+      "yaw": 0.3566517753781304,
+      "scenario_id": 3
+    },
+    {
+      "name": "obstacle17",
+      "position": [
+        3.919681859119562,
+        -1.4211692402022162
+      ],
+      "type": "scenario_obstacle",
+      "shape": "box",
+      "size": [
+        0.7,
+        0.2,
+        1.0
+      ],
+      "height": 1.0,
+      "yaw": 0.04781741953224028,
+      "scenario_id": 3
+    },
+    {
+      "name": "obstacle18",
+      "position": [
+        -1.9628747618898892,
+        1.4520217777914342
+      ],
+      "type": "scenario_obstacle",
+      "shape": "box",
+      "size": [
+        0.7,
+        0.2,
+        1.0
+      ],
+      "height": 1.0,
+      "yaw": 1.9469985652642583,
+      "scenario_id": 3
+    },
+    {
+      "name": "obstacle19",
+      "position": [
+        2.516597761851057,
+        1.321577765569601
+      ],
+      "type": "scenario_obstacle",
+      "shape": "box",
+      "size": [
+        0.7,
+        0.2,
+        1.0
+      ],
+      "height": 1.0,
+      "yaw": 1.6350598657776665,
+      "scenario_id": 3
+    },
+    {
+      "name": "obstacle20",
+      "position": [
+        -0.8604391406189169,
+        2.5327955157726167
+      ],
+      "type": "scenario_obstacle",
+      "shape": "box",
+      "size": [
+        0.7,
+        0.2,
+        1.0
+      ],
+      "height": 1.0,
+      "yaw": 0.14492433801318683,
+      "scenario_id": 3
+    },
+    {
+      "name": "wall_north",
+      "position": [
+        0.0,
+        5.0
+      ],
+      "shape": "box",
+      "size": [
+        10.0,
+        0.1,
+        1.0
+      ],
+      "type": "boundary"
+    },
+    {
+      "name": "wall_south",
+      "position": [
+        0.0,
+        -5.0
+      ],
+      "shape": "box",
+      "size": [
+        10.0,
+        0.1,
+        1.0
+      ],
+      "type": "boundary"
+    },
+    {
+      "name": "wall_east",
+      "position": [
+        5.0,
+        0.0
+      ],
+      "shape": "box",
+      "size": [
+        0.1,
+        10.0,
+        1.0
+      ],
+      "type": "boundary"
+    },
+    {
+      "name": "wall_west",
+      "position": [
+        -5.0,
+        0.0
+      ],
+      "shape": "box",
+      "size": [
+        0.1,
+        10.0,
+        1.0
+      ],
+      "type": "boundary"
+    }
+  ],
+  "counts": {
+    "fixed": 4,
+    "scenario_obstacles": 16,
+    "boundary": 4
+  },
+  "total_obstacles": 24,
+  "examples": [
+    {
+      "position": [
+        0.0,
+        0.0
+      ],
+      "yaw": 0.0,
+      "yaw_deg": 0.0,
+      "laser_scan": [
+        1.357092108361926,
+        1.3295519257410642,
+        1.4134276666644903,
+        3.5,
+        3.5,
+        3.5,
+        3.5,
+        3.5,
+        1.8197557638360298,
+        3.5,
+        3.5,
+        3.5,
+        1.1606466211410675,
+        0.9763146899397221,
+        3.2187499133737636,
+        2.9794238415977086,
+        3.5,
+        0.5900354444642155,
+        0.4970579816449604,
+        0.4616111201420851
+      ],
+      "min_laser": 0.4616111201420851
+    },
+    {
+      "position": [
+        -2.0,
+        2.0
+      ],
+      "yaw": 0.7853981633974483,
+      "yaw_deg": 45.0,
+      "laser_scan": [
+        3.5,
+        1.69667655227865,
+        1.6637717415595106,
+        1.9421959049768003,
+        3.5,
+        3.5,
+        3.5,
+        1.1906080493952207,
+        0.9191050868978593,
+        3.5,
+        2.3051574637360477,
+        2.0476349900037376,
+        3.166625398028302,
+        3.014150634153338,
+        2.952522167297722,
+        2.972829607929446,
+        3.077958483028471,
+        3.283648277264991,
+        1.3423354353941386,
+        1.1596551211459376
+      ],
+      "min_laser": 0.9191050868978593
+    },
+    {
+      "position": [
+        2.0,
+        -2.0
+      ],
+      "yaw": -1.5707963267948966,
+      "yaw_deg": -90.0,
+      "laser_scan": [
+        0.99148469655274,
+        1.010380177257961,
+        1.112360262423966,
+        3.5,
+        3.5,
+        3.5,
+        3.5,
+        3.221321165549923,
+        3.043118620502447,
+        2.960110277353329,
+        2.960110277353329,
+        1.4664818038449676,
+        0.8962013951515858,
+        0.658197663990339,
+        0.6796027596038544,
+        0.8140502299447292,
+        1.0505362721065536,
+        3.118995795314249,
+        2.990790483997264,
+        2.95
+      ],
+      "min_laser": 0.658197663990339
+    }
+  ]
+}

@@ -35,7 +35,7 @@ def load_obstacle_specs(obstacle_names=None):
             if path.is_dir() and path.name.startswith("obstacle"):
                 obstacle_names.append(path.name)
         if not obstacle_names:
-            obstacle_names = [f"obstacle{i}" for i in range(1, 13)]
+            obstacle_names = [f"obstacle{i}" for i in range(1, 21)]
         else:
             def _sort_key(name):
                 suffix = name.replace("obstacle", "")
@@ -108,7 +108,7 @@ def load_eval_scenarios(path=None):
         path = (
             Path(__file__).parent.parent
             / "assets"
-            / "eval_scenarios_12.json"
+            / "eval_scenarios_20.json"
         )
 
     scenario_path = Path(path)
@@ -148,8 +148,8 @@ def build_obstacle_entry(name, position, obs_type, yaw=None):
 def generate_seeded_obstacles(
     base_positions,
     seed=42,
-    count=4,
-    min_dist=1.8,
+    count=16,
+    min_dist=1.2,
     area_limits=(-4.0, 4.0),
 ):
     """
@@ -223,8 +223,8 @@ def export_obstacle_map(scenario=None):
         scenario_obstacles = generate_seeded_obstacles(
             base_positions=[obs['position'][:] for obs in fixed_obstacles],
             seed=42,
-            count=4,
-            min_dist=1.8,
+            count=16,
+            min_dist=1.2,
             area_limits=(-4.0, 4.0)
         )
     
@@ -303,7 +303,7 @@ def export_obstacle_map(scenario=None):
         obstacle_map['metadata']['seeded_obstacles'] = {
             'seed': 42,
             'count': len(scenario_obstacles),
-            'min_distance': 1.8,
+            'min_distance': 1.2,
             'area': {
                 'x_range': [-4.0, 4.0],
                 'y_range': [-4.0, 4.0]
