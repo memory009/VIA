@@ -107,5 +107,37 @@
       <uri>model://obstacle12</uri>
     </include>
 
+    <include>
+      <uri>model://obstacle13</uri>
+    </include>
+
+    <include>
+      <uri>model://obstacle14</uri>
+    </include>
+
+    <include>
+      <uri>model://obstacle15</uri>
+    </include>
+
+    <include>
+      <uri>model://obstacle16</uri>
+    </include>
+
+    <include>
+      <uri>model://obstacle17</uri>
+    </include>
+
+    <include>
+      <uri>model://obstacle18</uri>
+    </include>
+
+    <include>
+      <uri>model://obstacle19</uri>
+    </include>
+
+    <include>
+      <uri>model://obstacle20</uri>
+    </include>
+
   </world>
 </sdf>

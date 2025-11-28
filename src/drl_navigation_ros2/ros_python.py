@@ -167,7 +167,7 @@ class ROS_env:
         # 只在启用时生成随机障碍物
         if self.enable_random_obstacles:
             # for i in range(4, 8):
-            for i in range(4, 12):
+            for i in range(4, 20):
                 name = "obstacle" + str(i + 1)
                 self.set_random_position(name)
 

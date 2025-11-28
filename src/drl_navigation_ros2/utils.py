@@ -54,7 +54,7 @@ def record_eval_positions(
     save_to_file=True,
     random_seed=None,
     enable_random_obstacles=True,
-    n_random_obstacles=4,
+    n_random_obstacles=16,
     save_filename="eval_scenarios.json",
 ):
     """
