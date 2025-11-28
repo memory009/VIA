@@ -33,13 +33,13 @@ def check_position(x, y, element_positions, min_dist):
     return pos
 
 
-def set_random_position(name, element_positions):
+def set_random_position(name, element_positions, min_distance):
     angle = np.random.uniform(-np.pi, np.pi)
     pos = False
     while not pos:
         x = np.random.uniform(-4.0, 4.0)
         y = np.random.uniform(-4.0, 4.0)
-        pos = check_position(x, y, element_positions, 1.8)
+        pos = check_position(x, y, element_positions, min_distance)
     element_positions.append([x, y])
     eval_element = pos_data()
     eval_element.name = name
@@ -55,6 +55,7 @@ def record_eval_positions(
     random_seed=None,
     enable_random_obstacles=True,
     n_random_obstacles=16,
+    min_distance=1.8,
     save_filename="eval_scenarios.json",
 ):
     """
@@ -66,6 +67,7 @@ def record_eval_positions(
         random_seed: Random seed for reproducibility (None for random)
         enable_random_obstacles: Whether to include additional random obstacles (starting from obstacle5)
         n_random_obstacles: How many random obstacles to create (ignored if enable_random_obstacles=False)
+        min_distance: Minimum allowed distance between any two elements
         save_filename: Name of the JSON file to write (stored under assets/)
     
     Returns:
@@ -84,13 +86,13 @@ def record_eval_positions(
             total_random = max(0, n_random_obstacles)
             for i in range(4, 4 + total_random):
                 name = "obstacle" + str(i + 1)
-                eval_element = set_random_position(name, element_positions)
+                eval_element = set_random_position(name, element_positions, min_distance)
                 eval_scenario.append(eval_element)
 
-        eval_element = set_random_position("turtlebot3_waffle", element_positions)
+        eval_element = set_random_position("turtlebot3_waffle", element_positions, min_distance)
         eval_scenario.append(eval_element)
 
-        eval_element = set_random_position("target", element_positions)
+        eval_element = set_random_position("target", element_positions, min_distance)
         eval_scenario.append(eval_element)
 
         scenarios.append(eval_scenario)
@@ -103,7 +105,7 @@ def record_eval_positions(
         scenarios_dict = {
             'n_scenarios': n_eval_scenarios,
             'random_seed': random_seed,
-            'min_distance': 1.8,
+            'min_distance': float(min_distance),
             'enable_random_obstacles': enable_random_obstacles,
             'n_obstacles': 4 + n_random_obstacles if enable_random_obstacles else 4,
             'scenarios': []
@@ -134,6 +136,6 @@ def record_eval_positions(
         else:
             print("   - Random obstacles: Disabled (4 fixed only)")
             print("   - Total obstacles per scenario: 4")
-        print(f"   - Min distance between elements: 1.8m")
+        print(f"   - Min distance between elements: {float(min_distance):.2f}m")
 
     return scenarios

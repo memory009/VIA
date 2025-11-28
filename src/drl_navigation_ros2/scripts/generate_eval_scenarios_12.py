@@ -34,6 +34,12 @@ def parse_args():
         default="eval_scenarios_12.json",
         help="Filename to save under assets/ (default: eval_scenarios_12.json)",
     )
+    parser.add_argument(
+        "--min-distance",
+        type=float,
+        default=1.8,
+        help="Minimum distance between any two elements (default: 1.8m)",
+    )
     return parser.parse_args()
 
 
@@ -45,6 +51,7 @@ def main():
         random_seed=args.seed,
         enable_random_obstacles=True,
         n_random_obstacles=8,
+        min_distance=args.min_distance,
         save_filename=args.output,
     )
 
