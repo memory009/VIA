@@ -26,7 +26,7 @@ from utils import pos_data
 def load_eval_scenarios(json_path=None):
     """加载评估场景"""
     if json_path is None:
-        json_path = Path(__file__).parent.parent / "assets" / "eval_scenarios_12.json"
+        json_path = Path(__file__).parent.parent / "assets" / "eval_scenarios_20.json"
     
     if not json_path.exists():
         print(f"⚠️  场景文件不存在: {json_path}")
@@ -198,7 +198,7 @@ def main():
             all_trajectories.append(None)
     
     # ===== 5. 保存轨迹 =====
-    output_path = Path(__file__).parent.parent / "assets" / "trajectories_lightweight_12.pkl"
+    output_path = Path(__file__).parent.parent / "assets" / "trajectories_lightweight_20.pkl"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     
     with open(output_path, 'wb') as f:
