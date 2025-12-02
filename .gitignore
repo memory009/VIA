@@ -154,5 +154,3 @@ runs/
 # Training results and visualizations
 visualizations/
 **/visualizations/
-reachability_results*.json
-**/reachability_results*.json
