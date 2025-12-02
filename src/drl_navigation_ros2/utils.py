@@ -54,9 +54,9 @@ def record_eval_positions(
     save_to_file=True,
     random_seed=None,
     enable_random_obstacles=True,
-    n_random_obstacles=16,
+    n_random_obstacles=4,
     min_distance=1.8,
-    save_filename="eval_scenarios.json",
+    save_filename="eval_scenarios_8_polar.json",
 ):
     """
     Generate evaluation scenarios with random positions for obstacles, robot, and target.
