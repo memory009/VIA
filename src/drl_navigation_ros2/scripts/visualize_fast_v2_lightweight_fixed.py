@@ -21,10 +21,10 @@ sys.path.insert(0, str(project_root))
 
 def load_data(use_pure_polar=True):
     """加载数据 - Lightweight版本"""
-    traj_path = project_root / "assets" / "trajectories_lightweight_12.pkl"
+    traj_path = project_root / "assets" / "trajectories_lightweight_20.pkl"
     
     if use_pure_polar:
-        result_path = project_root / "assets" / "reachability_results_pure_polar_lightweight_12.json"
+        result_path = project_root / "assets" / "reachability_results_pure_polar_lightweight_20.json"
     else:
         result_path = project_root / "assets" / "reachability_results_parallel_lightweight.json"
     
@@ -292,7 +292,7 @@ def visualize_single_trajectory(traj_idx, trajectory_data, verification_result,
     
     plt.tight_layout()
     
-    output_dir = project_root / "visualizations" / "reachability_set_visualization_obstacle_12"
+    output_dir = project_root / "visualizations" / "reachability_set_visualization_obstacle_20"
     output_dir.mkdir(parents=True, exist_ok=True)
     filename = f'trajectory_{traj_idx+1:02d}_dense_tube_lightweight_fixed.png'
     save_path = output_dir / filename
@@ -341,7 +341,7 @@ def visualize_comparison(trajectories, results, selected_indices=None):
     print(f"✅ 完成！耗时: {elapsed:.1f} 秒 ({elapsed/60:.1f} 分钟)")
     print(
         "📁 可视化结果保存在: "
-        f"{project_root}/visualizations/reachability_set_visualization_obstacle_12/"
+        f"{project_root}/visualizations/reachability_set_visualization_obstacle_20/"
     )
     print(f"   文件命名格式: trajectory_XX_dense_tube_lightweight_fixed.png")
     print("="*70)
