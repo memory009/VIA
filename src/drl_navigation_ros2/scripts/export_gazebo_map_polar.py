@@ -481,7 +481,7 @@ def save_obstacle_map(output_path=None, scenario=None, scenario_tag=None):
         assets_dir = Path(__file__).parent.parent / "assets"
         if scenario_tag:
             assets_dir = assets_dir / f"eval_scenarios_{scenario_tag}"
-        output_path = assets_dir / "obstacle_map.json"
+        output_path = assets_dir / "obstacle_map_8_polar.json"
     
     obstacle_map = export_obstacle_map(scenario=scenario)
     

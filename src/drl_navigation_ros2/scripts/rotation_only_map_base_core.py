@@ -503,7 +503,8 @@ def main():
     observation_error = 0.01
     sample_interval = 1
     
-    n_workers = min(n_trajectories, n_cores // 2)
+    # n_workers = min(n_trajectories, n_cores // 2)
+    n_workers = 1
     print(f"  模型: TD3_Lightweight (26神经元)")
     print(f"  模型路径: {model_path}")
     print(f"  并行进程数: {n_workers}")
