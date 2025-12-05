@@ -16,9 +16,11 @@ from utils import record_eval_positions
 from pretrain_utils import Pretraining
 
 from eval_scenario_map_generator import generate_scenario_maps
-from trajectory_collector import collect_eval_trajectories
-from reachability_verifier import verify_trajectories_reachability
 from training_scenario_saver import save_training_episode_map
+# from eval_trajectory_collector import collect_eval_trajectories
+from training_trajectory_collector import TrainingTrajectoryCollector, collect_training_step
+from reachability_verifier import verify_trajectories_reachability
+
 
 def main(args=None):
     """Main training function"""
@@ -145,6 +147,8 @@ def main(args=None):
     }
     epochs_since_improvement = 0
     
+    trajectory_collector = TrainingTrajectoryCollector(save_dir="training_trajectories_8_polar")
+
     # 保存第一个 episode 的初始场景
     episode_in_epoch = 1
     save_path = save_training_episode_map(
@@ -169,17 +173,52 @@ def main(args=None):
             latest_scan, distance, cos, sin, collision, goal, a
         )
         replay_buffer.add(state, action, reward, terminal, next_state)
+        
+        # ✅ 收集训练步骤
+        collect_training_step(
+            collector=trajectory_collector,
+            state=state,
+            action=action,
+            reward=reward,
+            done=terminal,
+            latest_scan=latest_scan,
+            distance=distance,
+            cos=cos,
+            sin=sin,
+            collision=collision,
+            goal=goal,
+            prev_action=a
+        )            
 
         if terminal or steps == max_steps:
-            latest_scan, distance, cos, sin, collision, goal, a, reward = ros.reset()
-            
             episode += 1
             
-            # ✅ 先保存当前 reset 后的场景
-            episode_in_epoch += 1
+            # ✅ 关键修改：先用当前的 episode_in_epoch 保存轨迹
             current_epoch = epoch + 1
+            current_episode = episode_in_epoch  # 使用当前值（第一次是1，后面会递增）
             
-            # 只有当 episode_in_epoch <= episodes_per_epoch 时才保存
+            if current_episode <= episodes_per_epoch:
+                try:
+                    traj_path = trajectory_collector.save_trajectory(
+                        epoch=current_epoch,
+                        episode=current_episode  # 使用保存的当前值
+                    )
+                    if current_episode == 1 or current_episode == episodes_per_epoch:
+                        if traj_path:
+                            print(f"   📊 已保存训练轨迹: epoch_{current_epoch:03d}/episode_{current_episode:03d}.pkl")
+                except Exception as e:
+                    print(f"   ⚠️  保存训练轨迹失败: {e}")
+            
+            # ✅ 重置轨迹收集器
+            trajectory_collector.reset_trajectory()
+            
+            # ✅ 然后 reset 环境
+            latest_scan, distance, cos, sin, collision, goal, a, reward = ros.reset()
+            
+            # ✅ 递增 episode_in_epoch（为下一个 episode 准备）
+            episode_in_epoch += 1
+            
+            # ✅ 保存场景地图（reset 之后的场景，用于下一个 episode）
             if episode_in_epoch <= episodes_per_epoch:
                 save_path = save_training_episode_map(
                     env=ros,
@@ -187,8 +226,8 @@ def main(args=None):
                     episode=episode_in_epoch,
                     save_dir=f"train_scenario_8_polar"
                 )
-                if episode_in_epoch == episodes_per_epoch:
-                    print(f"   ✅ 训练场景 epoch_{current_epoch:03d} 的 {episodes_per_epoch} 个 episode 已全部保存")
+                if episode_in_epoch == 2 or episode_in_epoch == episodes_per_epoch:
+                    print(f"   💾 已保存训练场景: epoch_{current_epoch:03d}/episode_{episode_in_epoch:03d}.json")
 
             if episode % train_every_n == 0:
                 model.train(
@@ -199,7 +238,7 @@ def main(args=None):
 
             steps = 0
             
-            # ✅ 在保存之后再判断是否进入 eval
+            # ✅ 判断是否进入 eval
             if episode % episodes_per_epoch == 0:
                 current_metrics = eval(
                     model=model,
@@ -227,7 +266,18 @@ def main(args=None):
                 
                 episode = 0
                 epoch += 1
-                episode_in_epoch = 0
+                episode_in_epoch = 1
+
+                # ✅ eval 后重新 reset 到新的训练场景并保存
+                latest_scan, distance, cos, sin, collision, goal, a, reward = ros.reset()
+                if epoch < max_epochs:  # 确保不是最后一个 epoch
+                    save_path = save_training_episode_map(
+                        env=ros,
+                        epoch=epoch + 1,
+                        episode=episode_in_epoch,
+                        save_dir=f"train_scenario_8_polar"
+                    )
+                    print(f"   💾 已保存训练场景: epoch_{epoch+1:03d}/episode_001.json")                
         else:
             steps += 1
 
@@ -252,41 +302,37 @@ def eval(model, env, scenarios, epoch, max_steps, best_metrics, save_directory, 
     print(f"📊 Epoch {epoch} - Evaluating {len(scenarios)} scenarios")
     print("=" * 80)
 
-    # trajectory_path = collect_eval_trajectories(
-    #     model=model,
-    #     env=env,
-    #     scenarios=scenarios,
-    #     epoch=epoch,
-    #     max_steps=max_steps,
-    #     save_dir="trajectories_lightweight_8_polar"
-    # )
-    
-    import pickle
-    with open(trajectory_path, 'rb') as f:
-        trajectories = pickle.load(f)
-
-    # reachability_path = verify_trajectories_reachability(
-    #     model=model,
-    #     trajectory_path=trajectory_path,
-    #     epoch=epoch,
-    #     observation_error=0.01,
-    #     sample_interval=1,
-    #     save_dir="reachability_result_lightweight_8_polar"
-    # )
-
     avg_reward = 0.0
     col = 0
     gl = 0
-
-    for traj in trajectories:
-        avg_reward += traj['info']['total_reward'] if 'total_reward' in traj['info'] else sum(traj['rewards'])
-        col += 1 if traj['info']['collision'] else 0
-        gl += 1 if traj['info']['reached_goal'] else 0  
-
+    
+    # ✅ 使用原始的 eval 逻辑
+    for scenario in scenarios:
+        count = 0
+        latest_scan, distance, cos, sin, collision, goal, a, reward = env.eval(
+            scenario=scenario
+        )
+        while count < max_steps:
+            state, terminal = model.prepare_state(
+                latest_scan, distance, cos, sin, collision, goal, a
+            )
+            if terminal:
+                break
+            action = model.get_action(state, False)
+            a_in = [(action[0] + 1) / 2, action[1]]
+            latest_scan, distance, cos, sin, collision, goal, a, reward = env.step(
+                lin_velocity=a_in[0], ang_velocity=a_in[1]
+            )
+            avg_reward += reward
+            count += 1
+        
+        col += collision
+        gl += goal
+    
     avg_reward /= len(scenarios)
     avg_col = col / len(scenarios)
-    avg_goal = gl / len(scenarios)    
-
+    avg_goal = gl / len(scenarios)
+    
     print(f"   Success Rate:    {avg_goal:.3f} ({gl}/{len(scenarios)})")
     print(f"   Collision Rate:  {avg_col:.3f} ({col}/{len(scenarios)})")
     print(f"   Average Reward:  {avg_reward:.2f}")
