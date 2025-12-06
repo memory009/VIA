@@ -14,19 +14,8 @@ class ReplayBuffer(object):
         self.buffer = deque()
         random.seed(random_seed)
 
-    def add(self, s, a, r, t, s2, c=0.0):
-        """
-        添加经验到 buffer
-        
-        Args:
-            s: state
-            a: action
-            r: reward
-            t: terminal
-            s2: next_state
-            c: cost (default=0.0 for backward compatibility)
-        """
-        experience = (s, a, r, t, s2, c)
+    def add(self, s, a, r, t, s2):
+        experience = (s, a, r, t, s2)
         if self.count < self.buffer_size:
             self.buffer.append(experience)
             self.count += 1
@@ -38,10 +27,6 @@ class ReplayBuffer(object):
         return self.count
 
     def sample_batch(self, batch_size):
-        """
-        原始采样方法（兼容旧代码）
-        返回: (s, a, r, t, s2) - 不包含 cost
-        """
         if self.count < batch_size:
             batch = random.sample(self.buffer, self.count)
         else:
@@ -55,27 +40,7 @@ class ReplayBuffer(object):
 
         return s_batch, a_batch, r_batch, t_batch, s2_batch
 
-    def sample_batch_with_cost(self, batch_size):
-        """
-        新采样方法（包含 cost）
-        返回: (s, a, r, c, t, s2)
-        """
-        if self.count < batch_size:
-            batch = random.sample(self.buffer, self.count)
-        else:
-            batch = random.sample(self.buffer, batch_size)
-
-        s_batch = np.array([_[0] for _ in batch])
-        a_batch = np.array([_[1] for _ in batch])
-        r_batch = np.array([_[2] for _ in batch]).reshape(-1, 1)
-        t_batch = np.array([_[3] for _ in batch]).reshape(-1, 1)
-        s2_batch = np.array([_[4] for _ in batch])
-        c_batch = np.array([_[5] for _ in batch]).reshape(-1, 1)
-
-        return s_batch, a_batch, r_batch, c_batch, t_batch, s2_batch
-
     def return_buffer(self):
-        """返回整个 buffer（兼容旧代码）"""
         s = np.array([_[0] for _ in self.buffer])
         a = np.array([_[1] for _ in self.buffer])
         r = np.array([_[2] for _ in self.buffer]).reshape(-1, 1)
