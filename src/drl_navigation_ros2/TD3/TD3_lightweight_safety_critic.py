@@ -108,7 +108,7 @@ class TD3_SafetyCritic(object):
         device,
         lr=1e-4,
         hidden_dim=26,
-        lambda_safe=50.0,  # ✅ 默认值从 0.5 改为 50.0
+        lambda_safe=50.0,
         save_every=0,
         load_model=False,
         save_directory=Path("src/drl_navigation_ros2/models/TD3_safety"),
@@ -173,7 +173,7 @@ class TD3_SafetyCritic(object):
     def get_action(self, obs, add_noise):
         if add_noise:
             return (
-                self.act(obs) + np.random.normal(0, 0.2, size=self.action_dim)
+                self.act(obs) + np.random.normal(0, 0.3, size=self.action_dim)  # ✅ 0.2→0.3
             ).clip(-self.max_action, self.max_action)
         else:
             return self.act(obs)
@@ -195,18 +195,18 @@ class TD3_SafetyCritic(object):
     ):
         """训练循环 - 同时更新 Task Critics 和 Safety Critics"""
         
-        av_task_Q = 0
-        av_safe_Q = 0
+        av_task_Q = 0.0  # ✅ 初始化为 float
+        av_safe_Q = 0.0
         max_task_Q = -inf
-        av_task_loss = 0
-        av_safe_loss = 0
-        av_actor_loss = 0
-        av_Q_task_component = 0
-        av_Q_safe_component = 0
+        av_task_loss = 0.0
+        av_safe_loss = 0.0
+        av_actor_loss = 0.0
+        av_Q_task_component = 0.0  # ✅ 初始化为 float
+        av_Q_safe_component = 0.0
         
-        # ✅ 新增：Cost 统计
-        av_cost_in_batch = 0
-        max_cost_in_batch = 0
+        # ✅ Cost 统计
+        av_cost_in_batch = 0.0
+        max_cost_in_batch = 0.0
         
         for it in range(iterations):
             # 采样 batch（包含 cost）
@@ -227,8 +227,8 @@ class TD3_SafetyCritic(object):
             done = torch.Tensor(batch_dones).to(self.device)
 
             # ✅ 统计 Cost 分布
-            av_cost_in_batch += cost.mean()
-            max_cost_in_batch = max(max_cost_in_batch, cost.max())
+            av_cost_in_batch += cost.mean().item()  # ✅ 转换为标量
+            max_cost_in_batch = max(max_cost_in_batch, cost.max().item())
 
             # ===== 计算 Target Q =====
             next_action = self.actor_target(next_state)
@@ -245,14 +245,14 @@ class TD3_SafetyCritic(object):
             # Task Critics Target
             target_Q1_task, target_Q2_task = self.task_critic_target(next_state, next_action)
             target_Q_task = torch.min(target_Q1_task, target_Q2_task)
-            av_task_Q += torch.mean(target_Q_task)
-            max_task_Q = max(max_task_Q, torch.max(target_Q_task))
+            av_task_Q += torch.mean(target_Q_task).item()  # ✅ 转换为标量
+            max_task_Q = max(max_task_Q, torch.max(target_Q_task).item())
             target_Q_task = reward + ((1 - done) * discount * target_Q_task).detach()
 
             # Safety Critics Target
             target_Q1_safe, target_Q2_safe = self.safety_critic_target(next_state, next_action)
             target_Q_safe = torch.min(target_Q1_safe, target_Q2_safe)
-            av_safe_Q += torch.mean(target_Q_safe)
+            av_safe_Q += torch.mean(target_Q_safe).item()  # ✅ 转换为标量
             target_Q_safe = cost + ((1 - done) * discount * target_Q_safe).detach()
 
             # ===== 更新 Task Critics =====
@@ -262,7 +262,7 @@ class TD3_SafetyCritic(object):
             self.task_critic_optimizer.zero_grad()
             task_loss.backward()
             self.task_critic_optimizer.step()
-            av_task_loss += task_loss
+            av_task_loss += task_loss.item()  # ✅ 转换为标量
 
             # ===== 更新 Safety Critics =====
             current_Q1_safe, current_Q2_safe = self.safety_critic(state, action)
@@ -271,7 +271,7 @@ class TD3_SafetyCritic(object):
             self.safety_critic_optimizer.zero_grad()
             safe_loss.backward()
             self.safety_critic_optimizer.step()
-            av_safe_loss += safe_loss
+            av_safe_loss += safe_loss.item()  # ✅ 转换为标量
 
             # ===== 更新 Actor =====
             if it % policy_freq == 0:
@@ -280,19 +280,16 @@ class TD3_SafetyCritic(object):
                 Q_task, _ = self.task_critic(state, actor_action)
                 Q_safe, _ = self.safety_critic(state, actor_action)
                 
-                # 记录两个分量（用于 TensorBoard 监控）
-                Q_task_mean = Q_task.mean()
-                Q_safe_weighted_mean = (self.lambda_safe * Q_safe).mean()
+                # ✅ 记录两个分量（转换为标量）
+                av_Q_task_component += Q_task.mean().item()
+                av_Q_safe_component += (self.lambda_safe * Q_safe).mean().item()
                 
-                av_Q_task_component += Q_task_mean
-                av_Q_safe_component += Q_safe_weighted_mean
-                
-                actor_loss = -Q_task_mean + Q_safe_weighted_mean
+                actor_loss = -Q_task.mean() + self.lambda_safe * Q_safe.mean()
                 
                 self.actor_optimizer.zero_grad()
                 actor_loss.backward()
                 self.actor_optimizer.step()
-                av_actor_loss += actor_loss
+                av_actor_loss += actor_loss.item()  # ✅ 转换为标量
 
                 # Soft update - Actor
                 for param, target_param in zip(
@@ -323,19 +320,21 @@ class TD3_SafetyCritic(object):
         # ===== TensorBoard 记录 =====
         self.writer.add_scalar("train/task_loss", av_task_loss / iterations, self.iter_count)
         self.writer.add_scalar("train/safe_loss", av_safe_loss / iterations, self.iter_count)
-        self.writer.add_scalar("train/actor_loss", av_actor_loss / (iterations // policy_freq), self.iter_count)
+        
+        num_actor_updates = iterations // policy_freq
+        self.writer.add_scalar("train/actor_loss", av_actor_loss / num_actor_updates, self.iter_count)
+        
         self.writer.add_scalar("train/avg_task_Q", av_task_Q / iterations, self.iter_count)
         self.writer.add_scalar("train/avg_safe_Q", av_safe_Q / iterations, self.iter_count)
         self.writer.add_scalar("train/max_task_Q", max_task_Q, self.iter_count)
         
-        # ✅ 关键：在同一张图上画 Q_task 和 λ*Q_safe
-        num_actor_updates = iterations // policy_freq
+        # ✅ 关键：在同一张图上画 Q_task 和 λ*Q_safe（修复后）
         self.writer.add_scalar("train/actor_components/Q_task", 
                               av_Q_task_component / num_actor_updates, self.iter_count)
         self.writer.add_scalar("train/actor_components/lambda_Q_safe", 
                               av_Q_safe_component / num_actor_updates, self.iter_count)
         
-        # ✅ 新增：Cost 分布监控
+        # ✅ Cost 分布监控
         self.writer.add_scalar("train/cost_stats/avg_cost_in_batch", 
                               av_cost_in_batch / iterations, self.iter_count)
         self.writer.add_scalar("train/cost_stats/max_cost_in_batch", 

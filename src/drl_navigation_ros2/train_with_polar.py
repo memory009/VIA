@@ -40,17 +40,6 @@ class TeeStream:
         self.log.flush()
 
 
-def get_current_lambda(epoch, max_epochs, target_lambda):
-    """根据当前 epoch 动态调整 lambda_safe。"""
-    if epoch < 5:
-        return 0.0
-    elif epoch < 30:
-        ratio = (epoch - 5) / (30 - 5)
-        return target_lambda * ratio
-    else:
-        return target_lambda
-
-
 def main(args=None):
     """Main training function with CVaR-based Safe RL (Phase 2)"""
     parser = argparse.ArgumentParser(description='Train TD3 with CVaR Safe RL and Safety Critics')
@@ -140,7 +129,7 @@ def main(args=None):
         'action_dim': action_dim,
         'max_action': max_action,
         'device': device,
-        'save_every': 100,
+        'save_every': 0,  # 关闭自动保存，我们手动控制
         'load_model': False,
         'save_directory': save_directory,
         'model_name': model_name,
@@ -292,12 +281,6 @@ def main(args=None):
         
         # ===== Phase 4: 批量训练 =====
         print(f"\n🔧 Phase 4: Network Training")
-
-        if cmd_args.model_type == "safety":
-            current_lambda = get_current_lambda(epoch, max_epochs, cmd_args.lambda_safe)
-            model.lambda_safe = current_lambda
-            model.writer.add_scalar("config/lambda_safe", current_lambda, epoch)
-            print(f"   Current Lambda: {current_lambda:.4f}")
         
         model.train(
             replay_buffer=replay_buffer,
@@ -305,6 +288,8 @@ def main(args=None):
             batch_size=batch_size,
         )
         print(f"   ✅ 训练完成: {training_iterations_per_epoch} iterations")
+        print(f"   📊 当前 iter_count: {model.iter_count}")
+        print(f"   📊 当前 lambda_safe: {model.lambda_safe}")
         
         # ===== Phase 5: Eval =====
         current_metrics = eval(
@@ -340,7 +325,8 @@ def main(args=None):
     print(f"   Success Rate: {best_metrics['success_rate']:.3f}")
     print(f"   Collision Rate: {best_metrics['collision_rate']:.3f}")
     print(f"   Avg Reward: {best_metrics['avg_reward']:.2f}")
-    print(f"💾 最佳模型保存在: {save_directory}/{model_name}_best_*.pth")
+    print(f"💾 最佳模型: {save_directory}/{model_name}_best_*.pth")
+    print(f"💾 所有模型: {save_directory}/{model_name}_epoch_*.pth")
     print("=" * 80)
 
 
@@ -398,12 +384,20 @@ def eval(model, env, scenarios, epoch, max_steps, best_metrics, save_directory, 
         best_reward=best_metrics['avg_reward']
     )
     
+    # ✅ 保存当前 epoch 的模型
+    model.save(
+        filename=f"{model_name}_epoch_{epoch:03d}",
+        directory=save_directory
+    )
+    print(f"💾 已保存: {model_name}_epoch_{epoch:03d}_*.pth")
+    
+    # 如果是 best model，额外保存一份并突出显示
     if is_best:
         model.save(
             filename=f"{model_name}_best",
             directory=save_directory
         )
-        print(f"🌟 NEW BEST MODEL! 已保存")
+        print(f"🌟 NEW BEST MODEL! (epoch {epoch})")
         print(f"   Improvements:")
         if avg_goal > best_metrics['success_rate']:
             print(f"      Success: {best_metrics['success_rate']:.3f} → {avg_goal:.3f} ⬆️")
