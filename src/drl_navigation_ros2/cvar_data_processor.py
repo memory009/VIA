@@ -15,7 +15,7 @@ import time
 class CVaRDataProcessor:
     """CVaR 数据处理器 - 用于安全强化学习"""
     
-    def __init__(self, cvar_alpha=0.1, penalty_scale=50.0):
+    def __init__(self, cvar_alpha=0.1, penalty_scale=50.0, cost_scale_factor=10.0):
         """
         Args:
             cvar_alpha: CVaR 阈值 (0.1 = worst 10%)
@@ -23,6 +23,7 @@ class CVaRDataProcessor:
         """
         self.cvar_alpha = cvar_alpha
         self.penalty_scale = penalty_scale
+        self.cost_scale_factor = cost_scale_factor
         
         # POLAR 验证参数（从 rotation_only_map_base.py 复制）
         self.collision_delta = 0.4
@@ -322,8 +323,10 @@ class CVaRDataProcessor:
                     overlap_rate = violation['overlap_rate']
                     
                     penalty = overlap_rate * self.penalty_scale
-                    reward_modified = reward_original - penalty
-                    cost = overlap_rate
+                    # 移除reward_modified对我的Q_task的影响
+                    # reward_modified = reward_original - penalty
+                    reward_modified = reward_original
+                    cost = overlap_rate * self.cost_scale_factor
                 else:
                     # Normal case
                     penalty = 0.0

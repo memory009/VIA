@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""
+train_with_polar.py - 修改版
+
+关键改动：
+1. 添加 --load-baseline 和 --freeze-task-critic 命令行参数
+2. 在模型初始化时加载baseline权重
+3. 可选择冻结Task Critic
+"""
+
 from pathlib import Path
 from datetime import datetime
 import socket
 import argparse
 import sys
 
-from TD3.TD3 import TD3 as TD3_Original
-from TD3.TD3_lightweight import TD3 as TD3_Lightweight
-from TD3.TD3_lightweight_safety_critic import TD3_SafetyCritic
-from SAC.SAC import SAC
+from TD3.TD3_lightweight_safety_critic_with_freeze import TD3_SafetyCritic
 from ros_python import ROS_env
 from replay_buffer import ReplayBuffer
 import torch
@@ -25,7 +31,6 @@ from cvar_data_processor import CVaRDataProcessor
 
 class TeeStream:
     """同时将 stdout/stderr 输出写入日志文件。"""
-
     def __init__(self, stream, log_path):
         self.stream = stream
         log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -41,14 +46,14 @@ class TeeStream:
 
 
 def main(args=None):
-    """Main training function with CVaR-based Safe RL (Phase 2)"""
+    """Main training function with CVaR-based Safe RL + Baseline loading"""
     parser = argparse.ArgumentParser(description='Train TD3 with CVaR Safe RL and Safety Critics')
     parser.add_argument(
         '--model-type',
         type=str,
         default='safety',
-        choices=['TD3', 'lightweight', 'safety'],
-        help='Model type: "TD3", "lightweight", or "safety" (default: safety)'
+        choices=['safety'],
+        help='Model type: only "safety" supported in this version'
     )
     parser.add_argument(
         '--max-epochs',
@@ -66,27 +71,55 @@ def main(args=None):
         '--lambda-safe',
         type=float,
         default=50.0,
-        help='Safety weight lambda for actor loss (default: 50.0, recommended: 10-100)'
+        help='Safety weight lambda for actor loss (default: 50.0)'
     )
+    # ✅ 新增参数
+    parser.add_argument(
+        '--load-baseline',
+        action='store_true',
+        help='Load Task Critic and Actor from baseline model'
+    )
+    parser.add_argument(
+        '--baseline-path',
+        type=str,
+        default=None,
+        help='Path to baseline model directory (e.g., models/TD3_lightweight/best_run/)'
+    )
+    parser.add_argument(
+        '--freeze-task-critic',
+        action='store_true',
+        help='Freeze Task Critic parameters (no updates during training)'
+    )
+    parser.add_argument(
+        '--cost-scale-factor',
+        type=float,
+        default=500.0,
+        help='Cost scale factor for Safety Critic (default: 500.0)'
+    )
+    
     cmd_args = parser.parse_args(args)
+    
+    # ✅ 验证baseline参数
+    if cmd_args.load_baseline and not cmd_args.baseline_path:
+        print("❌ Error: --load-baseline requires --baseline-path")
+        return
+    
+    if cmd_args.baseline_path:
+        baseline_path = Path(cmd_args.baseline_path)
+        if not baseline_path.exists():
+            print(f"❌ Error: Baseline path does not exist: {baseline_path}")
+            return
     
     timestamp = datetime.now().strftime("%b%d_%H-%M-%S")
     hostname = socket.gethostname()
-    run_id = f"{timestamp}_{hostname}"
     
-    # 模型选择逻辑
-    if cmd_args.model_type == "TD3":
-        TD3_Class = TD3_Original
-        model_dir_name = "TD3"
-        model_name = "TD3"
-    elif cmd_args.model_type == "lightweight":
-        TD3_Class = TD3_Lightweight
-        model_dir_name = "TD3_lightweight"
-        model_name = "TD3_lightweight"
-    else:  # safety
-        TD3_Class = TD3_SafetyCritic
-        model_dir_name = "TD3_safety"
-        model_name = "TD3_safety"
+    # ✅ 在run_id中标记是否使用baseline
+    run_suffix = "_from_baseline" if cmd_args.load_baseline else ""
+    run_suffix += "_frozen" if cmd_args.freeze_task_critic else ""
+    run_id = f"{timestamp}_{hostname}{run_suffix}"
+    
+    model_dir_name = "TD3_safety"
+    model_name = "TD3_safety"
     
     save_directory = Path("src/drl_navigation_ros2/models") / model_dir_name / run_id
     save_directory.mkdir(parents=True, exist_ok=True)
@@ -103,7 +136,7 @@ def main(args=None):
     nr_eval_episodes = 10
     max_epochs = cmd_args.max_epochs
     episodes_per_epoch = cmd_args.episodes_per_epoch
-    training_iterations_per_epoch = 17500  # 500 * (70/2)
+    training_iterations_per_epoch = 17500
     batch_size = 40
     max_steps = 300
     load_saved_buffer = True
@@ -111,10 +144,16 @@ def main(args=None):
     pretraining_iterations = 50
     
     print("=" * 80)
-    print(f"🚀 开始新的训练运行 (Phase 2: CVaR + Safety Critics)")
+    print(f"🚀 开始新的训练运行 (CVaR + Safety Critics + Baseline)")
     print(f"🔧 模型类型: {model_name}")
-    if cmd_args.model_type == "safety":
-        print(f"🛡️  安全权重 λ: {cmd_args.lambda_safe}")
+    print(f"🛡️  安全权重 λ: {cmd_args.lambda_safe}")
+    print(f"💰 Cost scale factor: {cmd_args.cost_scale_factor}")
+    if cmd_args.load_baseline:
+        print(f"📦 加载Baseline: {cmd_args.baseline_path}")
+    if cmd_args.freeze_task_critic:
+        print(f"❄️  Task Critic: 冻结（不更新）")
+    else:
+        print(f"🔥 Task Critic: 正常训练")
     print(f"📁 运行ID: {run_id}")
     print(f"💾 模型保存路径: {save_directory}")
     print(f"📊 TensorBoard日志: runs/{run_id}")
@@ -123,23 +162,25 @@ def main(args=None):
     print(f"🔄 训练频率: {training_iterations_per_epoch} iterations/epoch")
     print("=" * 80)
 
-    # 模型初始化 - 根据类型添加不同参数
+    # ✅ 模型初始化 - 添加baseline加载参数
     model_kwargs = {
         'state_dim': state_dim,
         'action_dim': action_dim,
         'max_action': max_action,
         'device': device,
-        'save_every': 0,  # 关闭自动保存，我们手动控制
+        'save_every': 0,
         'load_model': False,
         'save_directory': save_directory,
         'model_name': model_name,
         'run_id': run_id,
+        'lambda_safe': cmd_args.lambda_safe,
+        # ✅ 新增baseline参数
+        'load_baseline': cmd_args.load_baseline,
+        'baseline_path': cmd_args.baseline_path if cmd_args.load_baseline else None,
+        'freeze_task_critic': cmd_args.freeze_task_critic,
     }
     
-    if cmd_args.model_type == "safety":
-        model_kwargs['lambda_safe'] = cmd_args.lambda_safe
-    
-    model = TD3_Class(**model_kwargs)
+    model = TD3_SafetyCritic(**model_kwargs)
 
     ros = ROS_env(enable_random_obstacles=True)
     eval_scenarios = record_eval_positions(
@@ -151,27 +192,36 @@ def main(args=None):
 
     generate_scenario_maps(eval_scenarios, scenario_tag="8_polar")
 
-    # Buffer size: 500,000
+    # ✅ Pretraining策略调整
     if load_saved_buffer:
-        pretraining = Pretraining(
+        pretraining_obj = Pretraining(
             file_names=["src/drl_navigation_ros2/assets/data.yml"],
             model=model,
             replay_buffer=ReplayBuffer(buffer_size=500000, random_seed=42),
             reward_function=ros.get_reward,
         )
-        replay_buffer = pretraining.load_buffer()
-        if pretrain:
-            pretraining.train(
+        replay_buffer = pretraining_obj.load_buffer()
+        
+        # ✅ 如果加载了baseline，跳过预训练（因为已经有好的权重了）
+        if pretrain and not cmd_args.load_baseline:
+            print("\n⚡ 开始预训练...")
+            pretraining_obj.train(
                 pretraining_iterations=pretraining_iterations,
                 replay_buffer=replay_buffer,
                 iterations=500,
                 batch_size=batch_size,
             )
+        elif cmd_args.load_baseline:
+            print("\n⏭️  跳过预训练（已加载baseline权重）")
     else:
         replay_buffer = ReplayBuffer(buffer_size=500000, random_seed=42)
 
-    # 初始化 CVaR 处理器
-    cvar_processor = CVaRDataProcessor(cvar_alpha=0.1, penalty_scale=50.0, cost_scale_factor=10.0)
+    # ✅ 初始化 CVaR 处理器 - 使用命令行参数
+    cvar_processor = CVaRDataProcessor(
+        cvar_alpha=0.1, 
+        penalty_scale=50.0,
+        cost_scale_factor=cmd_args.cost_scale_factor
+    )
     
     # Best model 追踪
     best_metrics = {
@@ -190,13 +240,14 @@ def main(args=None):
     while epoch < max_epochs:
         print(f"\n{'='*80}")
         print(f"🎯 Epoch {epoch + 1}/{max_epochs}")
+        if cmd_args.freeze_task_critic:
+            print(f"❄️  Task Critic: 冻结状态")
         print(f"{'='*80}")
         
         # ===== Phase 1: Rollout 完整的 70 条轨迹 =====
         print(f"\n📍 Phase 1: Rollout ({episodes_per_epoch} episodes)")
         
         for episode_in_epoch in range(1, episodes_per_epoch + 1):
-            # Reset 环境并保存场景
             latest_scan, distance, cos, sin, collision, goal, a, reward = ros.reset()
             save_training_episode_map(
                 env=ros,
@@ -207,7 +258,6 @@ def main(args=None):
             
             steps = 0
             
-            # Rollout 一个 episode
             while True:
                 state, terminal = model.prepare_state(
                     latest_scan, distance, cos, sin, collision, goal, a
@@ -222,7 +272,6 @@ def main(args=None):
                     latest_scan, distance, cos, sin, collision, goal, a
                 )
                 
-                # 收集轨迹（不加入 buffer）
                 collect_training_step(
                     collector=trajectory_collector,
                     state=state,
@@ -241,7 +290,6 @@ def main(args=None):
                 steps += 1
                 
                 if terminal or steps >= max_steps:
-                    # 保存轨迹
                     trajectory_collector.save_trajectory(
                         epoch=epoch + 1,
                         episode=episode_in_epoch
@@ -249,7 +297,6 @@ def main(args=None):
                     trajectory_collector.reset_trajectory()
                     break
             
-            # 简单进度显示
             if episode_in_epoch % 10 == 0 or episode_in_epoch == episodes_per_epoch:
                 print(f"   Rollout 进度: {episode_in_epoch}/{episodes_per_epoch}")
         
@@ -272,7 +319,6 @@ def main(args=None):
             for transition in traj_data['transitions']:
                 state, action, reward_modified, cost, done, next_state, penalty = transition
                 
-                # Phase 2: 存储 cost
                 replay_buffer.add(state, action, reward_modified, done, next_state, cost)
                 added_count += 1
         
@@ -281,6 +327,10 @@ def main(args=None):
         
         # ===== Phase 4: 批量训练 =====
         print(f"\n🔧 Phase 4: Network Training")
+        if cmd_args.freeze_task_critic:
+            print(f"   ❄️  Task Critic: 冻结（不更新）")
+            print(f"   🔥 Safety Critic: 训练中")
+            print(f"   🎭 Actor: 训练中（受Task + Safety双重指导）")
         
         model.train(
             replay_buffer=replay_buffer,
@@ -326,17 +376,11 @@ def main(args=None):
     print(f"   Collision Rate: {best_metrics['collision_rate']:.3f}")
     print(f"   Avg Reward: {best_metrics['avg_reward']:.2f}")
     print(f"💾 最佳模型: {save_directory}/{model_name}_best_*.pth")
-    print(f"💾 所有模型: {save_directory}/{model_name}_epoch_*.pth")
     print("=" * 80)
 
 
 def eval(model, env, scenarios, epoch, max_steps, best_metrics, save_directory, model_name):
-    """
-    Function to run evaluation
-    
-    Returns:
-        dict: Current evaluation metrics including 'is_best' flag
-    """
+    """评估函数（与原版相同）"""
     print("\n" + "=" * 80)
     print(f"📊 Epoch {epoch} - Evaluating {len(scenarios)} scenarios")
     print("=" * 80)
@@ -384,14 +428,12 @@ def eval(model, env, scenarios, epoch, max_steps, best_metrics, save_directory, 
         best_reward=best_metrics['avg_reward']
     )
     
-    # ✅ 保存当前 epoch 的模型
     model.save(
         filename=f"{model_name}_epoch_{epoch:03d}",
         directory=save_directory
     )
     print(f"💾 已保存: {model_name}_epoch_{epoch:03d}_*.pth")
     
-    # 如果是 best model，额外保存一份并突出显示
     if is_best:
         model.save(
             filename=f"{model_name}_best",
@@ -425,14 +467,7 @@ def eval(model, env, scenarios, epoch, max_steps, best_metrics, save_directory, 
 
 def is_better_model(current_success, current_collision, current_reward,
                     best_success, best_collision, best_reward):
-    """
-    多级判断标准
-    
-    优先级：
-    1. Success rate 更高 → 更好
-    2. Success rate 相同，collision rate 更低 → 更好
-    3. Success rate 和 collision rate 都相同，avg reward 更高 → 更好
-    """
+    """多级判断标准"""
     if current_success > best_success:
         return True
     elif current_success < best_success:
