@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-并行可达性验证脚本 - 纯POLAR版本 (TD3_lightweight) - 修正版
+并行可达性验证脚本 - 支持 TD3_SafetyCritic 和 TD3_Lightweight
 与训练代码完全对齐
 """
 
@@ -27,6 +27,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from TD3.TD3_lightweight import TD3 as TD3_Lightweight
+from TD3.TD3_lightweight_safety_critic_with_freeze import TD3_SafetyCritic
 
 def point_to_box_distance(point, box_center, box_size, box_yaw=0.0):
     """
@@ -347,25 +348,47 @@ def verify_single_trajectory_worker(args):
     2. 考虑旋转时的车体扫过区域
     3. 检查整个运动轨迹，不只是终点
     """
-    trajectory_idx, trajectory_data, model_path, observation_error, sample_interval = args
-    
-    # ===== 1. 加载轻量级模型 =====
+    trajectory_idx, trajectory_data, model_path, model_type, model_name, observation_error, sample_interval = args
+
+    # ===== 1. 加载模型（支持两种类型）=====
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    agent = TD3_Lightweight(
-        state_dim=25,
-        action_dim=2,
-        max_action=1.0,
-        device=device,
-        hidden_dim=26,
-        load_model=True,
-        model_name="TD3_lightweight_best",
-        load_directory=model_path,
-    )
+
+    if model_type == "TD3_SafetyCritic":
+        # 加载 TD3_SafetyCritic 模型
+        agent = TD3_SafetyCritic(
+            state_dim=25,
+            action_dim=2,
+            max_action=1.0,
+            device=device,
+            save_every=0,
+            load_model=False,
+            save_directory=model_path,
+            model_name=model_name,
+            run_id="polar_verification",
+            lambda_safe=50.0,
+            load_baseline=False,
+            baseline_path=None,
+            freeze_task_critic=False,
+        )
+        agent.load(filename=model_name, directory=str(model_path))
+    else:
+        # 加载 TD3_Lightweight 模型
+        agent = TD3_Lightweight(
+            state_dim=25,
+            action_dim=2,
+            max_action=1.0,
+            device=device,
+            hidden_dim=26,
+            load_model=True,
+            model_name=model_name,
+            load_directory=model_path,
+        )
     
     # ===== 2. 加载对应场景的障碍物地图 =====
-    # 构造障碍物地图文件路径
+    # 构造障碍物地图文件路径（根据模型类型选择场景目录）
+    scenario_dir = "eval_scenarios_8_polar" if model_type == "TD3_SafetyCritic" else "eval_scenarios_12"
     obstacle_map_path = (
-        project_root / "assets" / "eval_scenarios_12" / 
+        project_root / "assets" / scenario_dir /
         f"obstacle_map_scenario_{trajectory_idx:02d}.json"
     )
     
@@ -468,7 +491,8 @@ def verify_single_trajectory_worker(args):
 def load_trajectories(pkl_path=None):
     """加载保存的轨迹"""
     if pkl_path is None:
-        pkl_path = Path(__file__).parent.parent / "assets" / "trajectories_lightweight_12.pkl"
+        # 默认使用 epoch 011 的轨迹文件
+        pkl_path = Path(__file__).parent.parent / "assets" / "trajectories_lightweight_8_polar_freeze_11.pkl"
     
     if not pkl_path.exists():
         raise FileNotFoundError(f"轨迹文件不存在: {pkl_path}")
@@ -483,7 +507,7 @@ def load_trajectories(pkl_path=None):
 def main():
     """主函数"""
     print("\n" + "="*70)
-    print("🚀 纯POLAR并行验证工具 (TD3_Lightweight) - 修正版")
+    print("🚀 POLAR并行验证工具 (支持 TD3_SafetyCritic & TD3_Lightweight)")
     print("="*70)
     
     n_cores = cpu_count()
@@ -498,21 +522,34 @@ def main():
     print(f"  总状态数: {total_states}")
     
     print("\n[2/3] 准备并行计算...")
-    
-    model_path = project_root / "models" / "TD3_lightweight" / "Nov24_22-43-08_cheeson"
+
+    # ========== 配置区域 ==========
+    # 模型类型: "TD3_SafetyCritic" 或 "TD3_Lightweight"
+    model_type = "TD3_SafetyCritic"
+
+    # 模型名称和路径
+    if model_type == "TD3_SafetyCritic":
+        model_name = "TD3_safety_epoch_011"  # 权重文件名（不含后缀）
+        model_path = project_root / "models" / "TD3_safety" / "Dec09_20-20-51_cheeson_from_baseline_frozen"
+    else:
+        model_name = "TD3_lightweight_best"
+        model_path = project_root / "models" / "TD3_lightweight" / "Nov24_22-43-08_cheeson"
+    # ==============================
+
     observation_error = 0.01
     sample_interval = 1
-    
+
     n_workers = min(n_trajectories, n_cores // 2)
-    print(f"  模型: TD3_Lightweight (26神经元)")
+    print(f"  模型类型: {model_type}")
+    print(f"  模型名称: {model_name}")
     print(f"  模型路径: {model_path}")
     print(f"  并行进程数: {n_workers}")
     print(f"  观测误差: ±{observation_error}")
     print(f"  采样间隔: 每 {sample_interval} 步")
     print(f"  ✅ 修正：激光索引 state[0:20]，动作映射 (action+1)/2，宽度阈值 0.5/0.4")
-    
+
     args_list = [
-        (i, traj, model_path, observation_error, sample_interval)
+        (i, traj, model_path, model_type, model_name, observation_error, sample_interval)
         for i, traj in enumerate(trajectories)
     ]
     
@@ -606,7 +643,7 @@ def main():
     print(f"  并行效率: {speedup/n_workers*100:.1f}%")
     
     # 保存结果
-    output_path = Path(__file__).parent.parent / "assets" / "reachability_results_pure_polar_lightweight_12.json"
+    output_path = Path(__file__).parent.parent / "assets" / "reachability_results_pure_polar_lightweight_8_freeze.json"
     
     output_data = {
         'metadata': {
