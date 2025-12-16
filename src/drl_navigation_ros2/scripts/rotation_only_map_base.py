@@ -27,7 +27,8 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from TD3.TD3_lightweight import TD3 as TD3_Lightweight
-from TD3.TD3_lightweight_safety_critic_with_freeze import TD3_SafetyCritic
+from TD3.TD3_lightweight_safety_critic import TD3_SafetyCritic as TD3_SafetyCritic_Base
+from TD3.TD3_lightweight_safety_critic_with_freeze import TD3_SafetyCritic as TD3_SafetyCritic_Freeze
 
 def point_to_box_distance(point, box_center, box_size, box_yaw=0.0):
     """
@@ -350,12 +351,12 @@ def verify_single_trajectory_worker(args):
     """
     trajectory_idx, trajectory_data, model_path, model_type, model_name, observation_error, sample_interval = args
 
-    # ===== 1. 加载模型（支持两种类型）=====
+    # ===== 1. 加载模型（支持三种类型）=====
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    if model_type == "TD3_SafetyCritic":
-        # 加载 TD3_SafetyCritic 模型
-        agent = TD3_SafetyCritic(
+    if model_type == "TD3_SafetyCritic_Freeze":
+        # 加载 TD3_SafetyCritic_Freeze 模型（支持冻结Task Critic）
+        agent = TD3_SafetyCritic_Freeze(
             state_dim=25,
             action_dim=2,
             max_action=1.0,
@@ -371,7 +372,24 @@ def verify_single_trajectory_worker(args):
             freeze_task_critic=False,
         )
         agent.load(filename=model_name, directory=str(model_path))
-    else:
+
+    elif model_type == "TD3_SafetyCritic":
+        # 加载 TD3_SafetyCritic 模型（基础版）
+        agent = TD3_SafetyCritic_Base(
+            state_dim=25,
+            action_dim=2,
+            max_action=1.0,
+            device=device,
+            save_every=0,
+            load_model=False,
+            save_directory=model_path,
+            model_name=model_name,
+            run_id="polar_verification",
+            lambda_safe=50.0,
+        )
+        agent.load(filename=model_name, directory=str(model_path))
+
+    elif model_type == "TD3_Lightweight":
         # 加载 TD3_Lightweight 模型
         agent = TD3_Lightweight(
             state_dim=25,
@@ -383,10 +401,13 @@ def verify_single_trajectory_worker(args):
             model_name=model_name,
             load_directory=model_path,
         )
+
+    else:
+        raise ValueError(f"未知的模型类型: {model_type}。请选择: TD3_Lightweight, TD3_SafetyCritic, 或 TD3_SafetyCritic_Freeze")
     
     # ===== 2. 加载对应场景的障碍物地图 =====
     # 构造障碍物地图文件路径（根据模型类型选择场景目录）
-    scenario_dir = "eval_scenarios_8_polar" if model_type == "TD3_SafetyCritic" else "eval_scenarios_12"
+    scenario_dir = "eval_scenarios_8_polar" if model_type in ["TD3_SafetyCritic", "TD3_SafetyCritic_Freeze"] else "eval_scenarios_12"
     obstacle_map_path = (
         project_root / "assets" / scenario_dir /
         f"obstacle_map_scenario_{trajectory_idx:02d}.json"
@@ -492,7 +513,7 @@ def load_trajectories(pkl_path=None):
     """加载保存的轨迹"""
     if pkl_path is None:
         # 默认使用 epoch 011 的轨迹文件
-        pkl_path = Path(__file__).parent.parent / "assets" / "trajectories_lightweight_8_polar_freeze_11.pkl"
+        pkl_path = Path(__file__).parent.parent / "assets" / "trajectories_lightweight_8_polar_freeze_011.pkl"
     
     if not pkl_path.exists():
         raise FileNotFoundError(f"轨迹文件不存在: {pkl_path}")
@@ -507,33 +528,39 @@ def load_trajectories(pkl_path=None):
 def main():
     """主函数"""
     print("\n" + "="*70)
-    print("🚀 POLAR并行验证工具 (支持 TD3_SafetyCritic & TD3_Lightweight)")
+    print("🚀 POLAR并行验证工具 (支持多种模型)")
     print("="*70)
-    
+
     n_cores = cpu_count()
     print(f"\n检测到 CPU 核心数: {n_cores}")
-    
+
     print("\n[1/3] 加载轨迹...")
     trajectories = load_trajectories()
     n_trajectories = len(trajectories)
     print(f"  ✅ 加载 {n_trajectories} 条轨迹")
-    
+
     total_states = sum(t['steps'] for t in trajectories)
     print(f"  总状态数: {total_states}")
-    
+
     print("\n[2/3] 准备并行计算...")
 
     # ========== 配置区域 ==========
-    # 模型类型: "TD3_SafetyCritic" 或 "TD3_Lightweight"
-    model_type = "TD3_SafetyCritic"
+    # 模型类型:
+    # - "TD3_Lightweight": 基础轻量级TD3模型
+    # - "TD3_SafetyCritic": 安全批评家模型（基础版，来自 TD3_lightweight_safety_critic.py）
+    # - "TD3_SafetyCritic_Freeze": 安全批评家模型（支持冻结Task Critic，来自 TD3_lightweight_safety_critic_with_freeze.py）
+
+    model_type = "TD3_SafetyCritic_Freeze"  # ← 修改这里选择模型类型
 
     # 模型名称和路径
-    if model_type == "TD3_SafetyCritic":
+    if model_type in ["TD3_SafetyCritic", "TD3_SafetyCritic_Freeze"]:
         model_name = "TD3_safety_epoch_011"  # 权重文件名（不含后缀）
         model_path = project_root / "models" / "TD3_safety" / "Dec09_20-20-51_cheeson_from_baseline_frozen"
-    else:
+    elif model_type == "TD3_Lightweight":
         model_name = "TD3_lightweight_best"
         model_path = project_root / "models" / "TD3_lightweight" / "Nov24_22-43-08_cheeson"
+    else:
+        raise ValueError(f"未知的模型类型: {model_type}")
     # ==============================
 
     observation_error = 0.01
@@ -648,7 +675,8 @@ def main():
     output_data = {
         'metadata': {
             'method': 'pure_polar_paper_aligned',  # ✅ 修正：更准确的描述
-            'model': 'TD3_lightweight',
+            'model': model_name,
+            'model_type': model_type,  # 新增：模型类型
             'hidden_dim': 26,
             'n_trajectories': n_trajectories,
             'total_samples': total_samples,

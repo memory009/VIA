@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-POLAR 可达集可视化 - TD3_Lightweight版本（修正版）
+POLAR 可达集可视化 - 支持多种模型（修正版）
+支持: TD3, TD3_Lightweight, TD3_SafetyCritic
 直接使用 poses 数据，100%精确，无坐标系转换误差
 """
 
@@ -19,35 +20,49 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 
-def load_data(use_pure_polar=True):
-    """加载数据 - Lightweight版本"""
-    traj_path = project_root / "assets" / "trajectories_lightweight_20.pkl"
-    
-    if use_pure_polar:
-        result_path = project_root / "assets" / "reachability_results_pure_polar_lightweight_20.json"
-    else:
-        result_path = project_root / "assets" / "reachability_results_parallel_lightweight.json"
-    
+def load_data(use_pure_polar=True, trajectory_file=None, result_file=None):
+    """
+    加载数据 - 支持多种模型
+
+    Args:
+        use_pure_polar: 是否使用纯POLAR验证结果
+        trajectory_file: 自定义轨迹文件名（可选）
+        result_file: 自定义结果文件名（可选）
+    """
+    # 默认文件路径（可通过参数覆盖）
+    if trajectory_file is None:
+        trajectory_file = "trajectories_lightweight_20.pkl"
+    if result_file is None:
+        if use_pure_polar:
+            result_file = "reachability_results_pure_polar_lightweight_20.json"
+        else:
+            result_file = "reachability_results_parallel_lightweight.json"
+
+    traj_path = project_root / "assets" / trajectory_file
+    result_path = project_root / "assets" / result_file
+
     if not traj_path.exists():
         raise FileNotFoundError(f"轨迹文件不存在: {traj_path}")
-    
+
     if not result_path.exists():
         raise FileNotFoundError(f"验证结果文件不存在: {result_path}")
-    
+
     with open(traj_path, 'rb') as f:
         trajectories = pickle.load(f)
-    
+
     with open(result_path, 'r') as f:
         results = json.load(f)
-    
+
     model_info = results.get('metadata', {})
     model_name = model_info.get('model', 'TD3_lightweight')
     hidden_dim = model_info.get('hidden_dim', 26)
-    
+    model_type = model_info.get('model_type', 'TD3_Lightweight')  # 新增：模型类型
+
     print(f"✅ 加载 {len(trajectories)} 条轨迹")
     print(f"✅ 使用 {'纯POLAR' if use_pure_polar else '增强版'} 验证结果")
-    print(f"📊 模型: {model_name} (隐藏层: {hidden_dim} 神经元)")
-    
+    print(f"📊 模型类型: {model_type}")
+    print(f"📊 模型名称: {model_name} (隐藏层: {hidden_dim} 神经元)")
+
     return trajectories, results
 
 
@@ -303,40 +318,50 @@ def visualize_single_trajectory(traj_idx, trajectory_data, verification_result,
     print(f"  ✅ 保存: {filename}")
 
 
-def visualize_comparison(trajectories, results, selected_indices=None):
-    """批量可视化多条轨迹"""
+def visualize_comparison(trajectories, results, selected_indices=None, output_suffix=""):
+    """
+    批量可视化多条轨迹
+
+    Args:
+        trajectories: 轨迹数据列表
+        results: 验证结果字典
+        selected_indices: 要可视化的轨迹索引（None表示全部）
+        output_suffix: 输出文件名后缀（可选，用于区分不同模型）
+    """
     if selected_indices is None:
         selected_indices = list(range(len(trajectories)))
-    
+
     model_info = results.get('metadata', {})
     model_name = model_info.get('model', 'TD3_lightweight')
+    model_type = model_info.get('model_type', 'TD3_Lightweight')
     hidden_dim = model_info.get('hidden_dim', 26)
-    
+
     print(f"\n将可视化 {len(selected_indices)} 条轨迹")
-    print(f"模型: {model_name} ({hidden_dim}神经元)")
-    
+    print(f"模型类型: {model_type}")
+    print(f"模型名称: {model_name} ({hidden_dim}神经元)")
+
     import time
     start = time.time()
-    
+
     for idx in selected_indices:
         if idx >= len(trajectories):
             print(f"⚠️  跳过索引 {idx}（超出范围）")
             continue
-        
+
         if trajectories[idx] is None:
             print(f"⚠️  跳过索引 {idx}（数据为空）")
             continue
-        
+
         visualize_single_trajectory(
-            idx, 
-            trajectories[idx], 
+            idx,
+            trajectories[idx],
             results['trajectories'][idx],
             step_interval=1,
-            model_name=model_name
+            model_name=f"{model_type}_{model_name}" if output_suffix else model_name
         )
-    
+
     elapsed = time.time() - start
-    
+
     print("\n" + "="*70)
     print(f"✅ 完成！耗时: {elapsed:.1f} 秒 ({elapsed/60:.1f} 分钟)")
     print(
@@ -348,23 +373,56 @@ def visualize_comparison(trajectories, results, selected_indices=None):
 
 
 def main():
-    """主函数"""
+    """
+    主函数 - 支持多种模型
+
+    使用方式：
+    1. 默认加载 TD3_Lightweight 模型数据
+    2. 可通过修改下方配置加载其他模型（TD3_SafetyCritic等）
+    """
     print("\n" + "="*70)
-    print("🎨 POLAR 可达集可视化 - TD3_Lightweight版本（修正版）")
+    print("🎨 POLAR 可达集可视化 - 多模型支持版本（修正版）")
     print("="*70)
-    
+
+    # ===== 配置区域 =====
+    # 根据你的需求修改以下参数
+    USE_PURE_POLAR = True  # 是否使用纯POLAR验证结果
+
+    # 自定义文件路径（可选）
+    # 示例1：TD3_Lightweight 模型
+    # TRAJECTORY_FILE = "trajectories_lightweight_20.pkl"
+    # RESULT_FILE = "reachability_results_pure_polar_lightweight_20.json"
+
+    # 示例2：TD3_SafetyCritic 模型（取消注释以使用）
+    TRAJECTORY_FILE = "trajectories_lightweight_8_polar_freeze_11.pkl"
+    RESULT_FILE = "reachability_results_pure_polar_safety_freeze_11.json"
+
+    # 示例3：其他自定义模型
+    # TRAJECTORY_FILE = "your_custom_trajectories.pkl"
+    # RESULT_FILE = "your_custom_results.json"
+
+    # ===== 加载数据 =====
     try:
-        trajectories, results = load_data(use_pure_polar=True)
+        trajectories, results = load_data(
+            use_pure_polar=USE_PURE_POLAR,
+            trajectory_file=TRAJECTORY_FILE,
+            result_file=RESULT_FILE
+        )
     except FileNotFoundError as e:
         print(f"❌ 文件未找到: {e}")
         print("\n💡 提示:")
-        print("   1. 请先运行 parallel_verify_reachability_pure_lightweight.py")
-        print("   2. 确保生成了 reachability_results_pure_polar_lightweight.json")
-        print("   3. 确保存在 trajectories_lightweight.pkl")
+        print("   1. 请先运行相应的轨迹收集脚本（如 collect_trajectories_lightweight.py）")
+        print("   2. 然后运行可达性验证脚本（如 parallel_verify_reachability_pure_lightweight.py）")
+        print("   3. 确保在 assets/ 目录下生成了对应的 .pkl 和 .json 文件")
+        print(f"   4. 当前查找的文件:")
+        print(f"      - 轨迹文件: {TRAJECTORY_FILE}")
+        print(f"      - 结果文件: {RESULT_FILE}")
         return
-    
-    # 可视化所有轨迹
-    visualize_comparison(trajectories, results)
+
+    # ===== 可视化 =====
+    # 可视化所有轨迹，或指定特定轨迹索引
+    # visualize_comparison(trajectories, results, selected_indices=[0, 1, 2])  # 仅可视化前3条
+    visualize_comparison(trajectories, results)  # 可视化所有轨迹
 
 
 if __name__ == "__main__":

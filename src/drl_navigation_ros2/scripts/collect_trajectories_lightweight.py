@@ -2,7 +2,7 @@
 """
 轨迹收集脚本
 在本地 Gazebo 环境中运行，收集所有评估场景的轨迹
-输出：保存到 assets/trajectories_lightweight_8_polar.pkl
+输出：保存到 assets/trajectories_lightweight_8_polar_freeze.pkl
 """
 
 import sys
@@ -19,6 +19,8 @@ sys.path.insert(0, str(project_root))
 
 from TD3.TD3 import TD3
 from TD3.TD3_lightweight import TD3 as TD3_Lightweight
+from TD3.TD3_lightweight_safety_critic import TD3_SafetyCritic as TD3_SafetyCritic_Base
+from TD3.TD3_lightweight_safety_critic_with_freeze import TD3_SafetyCritic as TD3_SafetyCritic_Freeze
 from ros_python import ROS_env
 from utils import pos_data
 
@@ -150,18 +152,73 @@ def main():
     # ===== 1. 加载模型 =====
     print("\n[1/4] 加载模型...")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
-    # 加载 best 版本的模型
-    agent = TD3_Lightweight(
-        state_dim=25,
-        action_dim=2,
-        max_action=1.0,
-        device=device,
-        load_model=True,
-        model_name="TD3_lightweight_best",  # ← 加载 best 版本
-        load_directory=Path("models/TD3_lightweight/Nov24_22-43-08_cheeson"),
-    )
-    print(f"  ✅ 模型加载成功")
+
+    # ===== 配置要加载的模型 =====
+    # 可选模型类型:
+    # - "TD3_Lightweight": 基础轻量级TD3模型
+    # - "TD3_SafetyCritic": 安全批评家模型（基础版，来自 TD3_lightweight_safety_critic.py）
+    # - "TD3_SafetyCritic_Freeze": 安全批评家模型（支持冻结Task Critic，来自 TD3_lightweight_safety_critic_with_freeze.py）
+
+    model_type = "TD3_SafetyCritic_Freeze"  # ← 修改这里选择模型类型
+    model_name = "TD3_safety_epoch_011"     # 要加载的权重文件名（不含后缀）
+    model_dir = Path("models/TD3_safety/Dec09_20-20-51_cheeson_from_baseline_frozen")
+
+    # 根据模型类型加载
+    if model_type == "TD3_SafetyCritic_Freeze":
+        print(f"  加载 TD3_SafetyCritic_Freeze 模型 (支持冻结): {model_name}")
+        print(f"  来源: TD3_lightweight_safety_critic_with_freeze.py")
+        agent = TD3_SafetyCritic_Freeze(
+            state_dim=25,
+            action_dim=2,
+            max_action=1.0,
+            device=device,
+            save_every=0,
+            load_model=False,  # 先不自动加载
+            save_directory=model_dir,
+            model_name=model_name,
+            run_id="eval_mode",
+            lambda_safe=50.0,  # 这些参数在推理时不重要
+            load_baseline=False,
+            baseline_path=None,
+            freeze_task_critic=False,
+        )
+        # 手动加载权重
+        agent.load(filename=model_name, directory=str(model_dir))
+        print(f"  ✅ TD3_SafetyCritic_Freeze 模型加载成功")
+
+    elif model_type == "TD3_SafetyCritic":
+        print(f"  加载 TD3_SafetyCritic 模型 (基础版): {model_name}")
+        print(f"  来源: TD3_lightweight_safety_critic.py")
+        agent = TD3_SafetyCritic_Base(
+            state_dim=25,
+            action_dim=2,
+            max_action=1.0,
+            device=device,
+            save_every=0,
+            load_model=False,
+            save_directory=model_dir,
+            model_name=model_name,
+            run_id="eval_mode",
+            lambda_safe=50.0,
+        )
+        agent.load(filename=model_name, directory=str(model_dir))
+        print(f"  ✅ TD3_SafetyCritic 模型加载成功")
+
+    elif model_type == "TD3_Lightweight":
+        print(f"  加载 TD3_Lightweight 模型: {model_name}")
+        agent = TD3_Lightweight(
+            state_dim=25,
+            action_dim=2,
+            max_action=1.0,
+            device=device,
+            load_model=True,
+            model_name=model_name,
+            load_directory=model_dir,
+        )
+        print(f"  ✅ TD3_Lightweight 模型加载成功")
+
+    else:
+        raise ValueError(f"未知的模型类型: {model_type}。请选择: TD3_Lightweight, TD3_SafetyCritic, 或 TD3_SafetyCritic_Freeze")
     
     # ===== 2. 初始化环境 =====
     print("\n[2/4] 初始化 ROS 环境...")
@@ -198,7 +255,7 @@ def main():
             all_trajectories.append(None)
     
     # ===== 5. 保存轨迹 =====
-    output_path = Path(__file__).parent.parent / "assets" / "trajectories_lightweight_8_polar.pkl"
+    output_path = Path(__file__).parent.parent / "assets" / "trajectories_lightweight_8_polar_freeze_011.pkl"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     
     with open(output_path, 'wb') as f:
