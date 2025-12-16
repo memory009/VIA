@@ -3,14 +3,7 @@
 """
 Visualize evaluation trajectories scene-by-scene.
 
-Data sources (tag-aware):
-    - Trajectories:  src/drl_navigation_ros2/assets/trajectories_lightweight_<TAG>.pkl
-    - Obstacles:     src/drl_navigation_ros2/assets/eval_scenarios_<TAG>/obstacle_map_scenario_XX.json
-                     (fallback: obstacle_map.json)
-    - Scenarios:     src/drl_navigation_ros2/assets/eval_scenarios_<TAG>.json
-
-Outputs:
-    - visualizations/real_trajectories_<TAG>/trajectory_sXX.png   (per scene)
+使用方法：直接修改下面的配置变量即可
 """
 
 import argparse
@@ -27,7 +20,9 @@ from matplotlib.patches import Circle, Rectangle
 from matplotlib.transforms import Affine2D
 
 
-
+# ============================================================================
+# 配置区域 - 直接修改这里的路径即可
+# ============================================================================
 def _detect_project_root() -> Path:
     """
     优先使用当前工作目录（若包含 assets/visualizations），
@@ -42,17 +37,20 @@ def _detect_project_root() -> Path:
 PROJECT_ROOT = _detect_project_root()
 ASSETS_DIR = PROJECT_ROOT / "assets"
 VIS_DIR = PROJECT_ROOT / "visualizations"
-DEFAULT_SCENARIO_TAG = "12"
 
+# 配置：轨迹文件路径
+TRAJECTORY_FILE = ASSETS_DIR / "trajectories_lightweight.pkl"
 
-def _resolve_scenario_tag(path: Path) -> str:
-    """根据文件名推断场景标签（例如 eval_scenarios_12 -> 12）"""
-    stem = path.stem
-    parts = stem.split("_")
-    for part in reversed(parts):
-        if part.isdigit():
-            return part
-    return stem
+# 配置：场景文件夹（包含 obstacle_map_scenario_XX.json 文件）
+SCENARIO_DIR = ASSETS_DIR / "eval_scenarios_8_polar"
+
+# 配置：场景配置文件（包含所有场景的起点、终点等信息）
+SCENARIO_CONFIG_FILE = ASSETS_DIR / "eval_scenarios_8_polar.json"
+
+# 配置：输出文件夹名称
+OUTPUT_DIR_NAME = "real_trajectories_8_polar"
+
+# ============================================================================
 
 # 与 Gazebo 世界保持一致的尺寸覆盖（obstacle1/2 在 SDF 中命名互换）
 SIZE_OVERRIDES = {
@@ -87,9 +85,9 @@ def load_obstacle_map(json_path: Path):
 
 def load_eval_scenarios(path: Path):
     if not path.exists():
-        return None, _resolve_scenario_tag(path)
+        return None
     with open(path, "r", encoding="utf-8") as f:
-        return json.load(f), _resolve_scenario_tag(path)
+        return json.load(f)
 
 
 def draw_obstacles(ax, obstacle_map):
@@ -237,109 +235,65 @@ def plot_single_trajectory(idx, traj, obstacle_map, output_dir, scenario_id=None
     print(f"  -> Saved scene plot: {save_path}")
 
 
-def parse_args(default_tag="12"):
+def parse_args():
     parser = argparse.ArgumentParser(description="Visualize recorded evaluation trajectories (per scenario)")
-    default_traj = ASSETS_DIR / f"trajectories_lightweight_{default_tag}.pkl"
-    default_obstacle = ASSETS_DIR / f"eval_scenarios_{default_tag}" / "obstacle_map.json"
-    default_eval = ASSETS_DIR / f"eval_scenarios_{default_tag}.json"
     parser.add_argument(
         "--trajectories",
         type=Path,
-        default=default_traj,
+        default=TRAJECTORY_FILE,
         help="Trajectory data file (.pkl)",
     )
     parser.add_argument(
-        "--obstacle-map",
+        "--scenario-dir",
         type=Path,
-        default=default_obstacle,
-        help="Obstacle map (.json)",
+        default=SCENARIO_DIR,
+        help="Scenario directory containing obstacle_map_scenario_XX.json files",
     )
     parser.add_argument(
-        "--eval-scenarios",
+        "--scenario-config",
         type=Path,
-        default=default_eval,
-        help="Eval scenarios file (.json)",
+        default=SCENARIO_CONFIG_FILE,
+        help="Scenario config file (.json)",
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=VIS_DIR,
+        default=VIS_DIR / OUTPUT_DIR_NAME,
         help="Directory for generated figures",
     )
-    args = parser.parse_args()
-    defaults = {
-        "trajectories": default_traj,
-        "obstacle_map": default_obstacle,
-        "eval_scenarios": default_eval,
-        "output_dir": VIS_DIR,
-    }
-    return args, defaults
+    return parser.parse_args()
 
 
 def main():
-    args, defaults = parse_args(DEFAULT_SCENARIO_TAG)
+    args = parse_args()
 
-    scenarios_data, scenario_tag = load_eval_scenarios(args.eval_scenarios)
+    # 加载场景配置
+    scenarios_data = None
+    if args.scenario_config.exists():
+        with open(args.scenario_config, "r", encoding="utf-8") as f:
+            scenarios_data = json.load(f)
     scenarios = scenarios_data.get("scenarios", []) if scenarios_data else []
 
-    if scenario_tag:
-        assets_scenario_dir = ASSETS_DIR / f"eval_scenarios_{scenario_tag}"
-        output_dir = args.output_dir / f"real_trajectories_{scenario_tag}"
-    else:
-        assets_scenario_dir = ASSETS_DIR
-        output_dir = args.output_dir / "real_trajectories"
+    # 加载轨迹
+    trajectories = load_trajectories(args.trajectories)
 
-    trajectories_path = args.trajectories
-    if (
-        scenario_tag
-        and defaults
-        and trajectories_path == defaults["trajectories"]
-    ):
-        candidate_traj = ASSETS_DIR / f"trajectories_lightweight_{scenario_tag}.pkl"
-        if candidate_traj.exists():
-            trajectories_path = candidate_traj
+    # 输出目录
+    output_dir = args.output_dir
 
-    trajectories = load_trajectories(trajectories_path)
-
+    # 遍历每条轨迹
     for idx, traj in enumerate(trajectories):
         scenario = scenarios[idx] if idx < len(scenarios) else None
-        scenario_id = scenario.get("scenario_id") if scenario else None
+        scenario_id = scenario.get("scenario_id") if scenario else idx
 
-        default_fallback_map = ASSETS_DIR / "obstacle_map.json"
-        map_candidates = []
+        # 查找对应的障碍物地图文件
+        obstacle_map_file = args.scenario_dir / f"obstacle_map_scenario_{scenario_id:02d}.json"
 
-        if scenario_tag and scenario_id is not None:
-            map_candidates.append(
-                assets_scenario_dir / f"obstacle_map_scenario_{scenario_id:02d}.json"
-            )
+        if not obstacle_map_file.exists():
+            print(f"[WARNING] Obstacle map not found: {obstacle_map_file}, skipping...")
+            continue
 
-        if scenario_tag and scenario_id is None:
-            map_candidates.append(
-                assets_scenario_dir / f"obstacle_map_scenario_{idx:02d}.json"
-            )
-
-        if (
-            scenario_tag
-            and defaults
-            and args.obstacle_map == defaults["obstacle_map"]
-        ):
-            map_candidates.append(assets_scenario_dir / "obstacle_map.json")
-
-        map_candidates.append(args.obstacle_map)
-        map_candidates.append(default_fallback_map)
-
-        map_path = None
-        for candidate in map_candidates:
-            if candidate and candidate.exists():
-                map_path = candidate
-                break
-
-        if map_path is None:
-            raise FileNotFoundError(
-                "未找到可用的障碍物地图，请先运行 export_gazebo_map.py 生成对应 JSON。"
-            )
-
-        obstacle_map = load_obstacle_map(map_path)
+        # 加载障碍物地图并绘制
+        obstacle_map = load_obstacle_map(obstacle_map_file)
         plot_single_trajectory(idx, traj, obstacle_map, output_dir, scenario_id=scenario_id)
 
     print("\n[OK] Trajectory visualization finished.")

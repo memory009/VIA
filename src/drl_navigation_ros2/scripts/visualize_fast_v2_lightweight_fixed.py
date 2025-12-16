@@ -307,7 +307,7 @@ def visualize_single_trajectory(traj_idx, trajectory_data, verification_result,
     
     plt.tight_layout()
     
-    output_dir = project_root / "visualizations" / "reachability_set_visualization_obstacle_20"
+    output_dir = project_root / "visualizations" / "reachability_set_visualization_obstacle_8_freeze_011"
     output_dir.mkdir(parents=True, exist_ok=True)
     filename = f'trajectory_{traj_idx+1:02d}_dense_tube_lightweight_fixed.png'
     save_path = output_dir / filename
