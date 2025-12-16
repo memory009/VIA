@@ -366,7 +366,7 @@ def visualize_comparison(trajectories, results, selected_indices=None, output_su
     print(f"✅ 完成！耗时: {elapsed:.1f} 秒 ({elapsed/60:.1f} 分钟)")
     print(
         "📁 可视化结果保存在: "
-        f"{project_root}/visualizations/reachability_set_visualization_obstacle_20/"
+        f"{project_root}/visualizations/reachability_set_visualization_obstacle_8_freeze_011/"
     )
     print(f"   文件命名格式: trajectory_XX_dense_tube_lightweight_fixed.png")
     print("="*70)
@@ -393,9 +393,9 @@ def main():
     # TRAJECTORY_FILE = "trajectories_lightweight_20.pkl"
     # RESULT_FILE = "reachability_results_pure_polar_lightweight_20.json"
 
-    # 示例2：TD3_SafetyCritic 模型（取消注释以使用）
-    TRAJECTORY_FILE = "trajectories_lightweight_8_polar_freeze_11.pkl"
-    RESULT_FILE = "reachability_results_pure_polar_safety_freeze_11.json"
+    # 示例2：TD3_SafetyCritic_Freeze 模型（epoch 011）
+    TRAJECTORY_FILE = "trajectories_lightweight_8_polar_freeze_011.pkl"
+    RESULT_FILE = "reachability_results_pure_polar_lightweight_8_freeze_011.json"
 
     # 示例3：其他自定义模型
     # TRAJECTORY_FILE = "your_custom_trajectories.pkl"

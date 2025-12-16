@@ -670,7 +670,7 @@ def main():
     print(f"  并行效率: {speedup/n_workers*100:.1f}%")
     
     # 保存结果
-    output_path = Path(__file__).parent.parent / "assets" / "reachability_results_pure_polar_lightweight_8_freeze.json"
+    output_path = Path(__file__).parent.parent / "assets" / "reachability_results_pure_polar_lightweight_8_freeze_011.json"
     
     output_data = {
         'metadata': {
