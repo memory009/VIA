@@ -307,7 +307,7 @@ def visualize_single_trajectory(traj_idx, trajectory_data, verification_result,
     
     plt.tight_layout()
     
-    output_dir = project_root / "visualizations" / "reachability_set_visualization_obstacle_8_freeze_011"
+    output_dir = project_root / "visualizations" / "reachability_set_visualization_obstacle_8_freeze_065"
     output_dir.mkdir(parents=True, exist_ok=True)
     filename = f'trajectory_{traj_idx+1:02d}_dense_tube_lightweight_fixed.png'
     save_path = output_dir / filename
@@ -366,7 +366,7 @@ def visualize_comparison(trajectories, results, selected_indices=None, output_su
     print(f"✅ 完成！耗时: {elapsed:.1f} 秒 ({elapsed/60:.1f} 分钟)")
     print(
         "📁 可视化结果保存在: "
-        f"{project_root}/visualizations/reachability_set_visualization_obstacle_8_freeze_011/"
+        f"{project_root}/visualizations/reachability_set_visualization_obstacle_8_freeze_065/"
     )
     print(f"   文件命名格式: trajectory_XX_dense_tube_lightweight_fixed.png")
     print("="*70)
@@ -393,9 +393,9 @@ def main():
     # TRAJECTORY_FILE = "trajectories_lightweight_20.pkl"
     # RESULT_FILE = "reachability_results_pure_polar_lightweight_20.json"
 
-    # 示例2：TD3_SafetyCritic_Freeze 模型（epoch 011）
-    TRAJECTORY_FILE = "trajectories_lightweight_8_polar_freeze_011.pkl"
-    RESULT_FILE = "reachability_results_pure_polar_lightweight_8_freeze_011.json"
+    # 示例2：TD3_SafetyCritic_Freeze 模型（epoch 065）
+    TRAJECTORY_FILE = "trajectories_lightweight_8_polar_freeze_065.pkl"
+    RESULT_FILE = "reachability_results_pure_polar_lightweight_8_freeze_065.json"
 
     # 示例3：其他自定义模型
     # TRAJECTORY_FILE = "your_custom_trajectories.pkl"

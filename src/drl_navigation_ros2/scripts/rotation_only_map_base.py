@@ -512,9 +512,9 @@ def verify_single_trajectory_worker(args):
 def load_trajectories(pkl_path=None):
     """加载保存的轨迹"""
     if pkl_path is None:
-        # 默认使用 epoch 011 的轨迹文件
-        pkl_path = Path(__file__).parent.parent / "assets" / "trajectories_lightweight_8_polar_freeze_011.pkl"
-    
+        # 默认使用 epoch 065 的轨迹文件
+        pkl_path = Path(__file__).parent.parent / "assets" / "trajectories_lightweight_8_polar_freeze_065.pkl"
+
     if not pkl_path.exists():
         raise FileNotFoundError(f"轨迹文件不存在: {pkl_path}")
     
@@ -554,7 +554,7 @@ def main():
 
     # 模型名称和路径
     if model_type in ["TD3_SafetyCritic", "TD3_SafetyCritic_Freeze"]:
-        model_name = "TD3_safety_epoch_011"  # 权重文件名（不含后缀）
+        model_name = "TD3_safety_epoch_065"  # 权重文件名（不含后缀）
         model_path = project_root / "models" / "TD3_safety" / "Dec09_20-20-51_cheeson_from_baseline_frozen"
     elif model_type == "TD3_Lightweight":
         model_name = "TD3_lightweight_best"
@@ -670,7 +670,7 @@ def main():
     print(f"  并行效率: {speedup/n_workers*100:.1f}%")
     
     # 保存结果
-    output_path = Path(__file__).parent.parent / "assets" / "reachability_results_pure_polar_lightweight_8_freeze_011.json"
+    output_path = Path(__file__).parent.parent / "assets" / "reachability_results_pure_polar_lightweight_8_freeze_065.json"
     
     output_data = {
         'metadata': {

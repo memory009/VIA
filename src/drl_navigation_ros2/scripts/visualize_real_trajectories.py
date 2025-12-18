@@ -39,7 +39,7 @@ ASSETS_DIR = PROJECT_ROOT / "assets"
 VIS_DIR = PROJECT_ROOT / "visualizations"
 
 # 配置：轨迹文件路径
-TRAJECTORY_FILE = ASSETS_DIR / "trajectories_lightweight.pkl"
+TRAJECTORY_FILE = ASSETS_DIR / "trajectories_lightweight_8_polar_freeze_065.pkl"
 
 # 配置：场景文件夹（包含 obstacle_map_scenario_XX.json 文件）
 SCENARIO_DIR = ASSETS_DIR / "eval_scenarios_8_polar"
@@ -48,7 +48,7 @@ SCENARIO_DIR = ASSETS_DIR / "eval_scenarios_8_polar"
 SCENARIO_CONFIG_FILE = ASSETS_DIR / "eval_scenarios_8_polar.json"
 
 # 配置：输出文件夹名称
-OUTPUT_DIR_NAME = "real_trajectories_8_polar"
+OUTPUT_DIR_NAME = "real_trajectories_8_polar_freeze_065"
 
 # ============================================================================
 

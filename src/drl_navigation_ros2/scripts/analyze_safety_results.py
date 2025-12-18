@@ -19,7 +19,7 @@ def format_seconds(seconds: float) -> str:
 def analyze_safety_results(json_path=None):
     """分析安全验证结果"""
     if json_path is None:
-        json_path = Path("assets/reachability_results_pure_polar_lightweight.json")
+        json_path = Path("assets/reachability_results_pure_polar_lightweight_8_freeze_065.json")
     
     with open(json_path, 'r') as f:
         data = json.load(f)
@@ -194,92 +194,92 @@ def analyze_safety_results(json_path=None):
     
     print("\n" + "="*70)
     
-    # 7. 生成可视化
-    plot_safety_distribution(trajectories)
+    # # 7. 生成可视化
+    # plot_safety_distribution(trajectories)
 
 
-def plot_safety_distribution(trajectories):
-    """绘制安全率分布图"""
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+# def plot_safety_distribution(trajectories):
+#     """绘制安全率分布图"""
+#     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
     
-    # 1. 安全率直方图
-    ax1 = axes[0, 0]
-    safety_rates = [t['safety_rate'] for t in trajectories]
-    ax1.hist(safety_rates, bins=20, edgecolor='black', alpha=0.7)
-    ax1.set_xlabel('Safety Rate')
-    ax1.set_ylabel('Number of Trajectories')
-    ax1.set_title('Distribution of Safety Rates')
-    ax1.axvline(np.mean(safety_rates), color='r', linestyle='--', 
-                label=f'Mean: {np.mean(safety_rates)*100:.1f}%')
-    ax1.legend()
+#     # 1. 安全率直方图
+#     ax1 = axes[0, 0]
+#     safety_rates = [t['safety_rate'] for t in trajectories]
+#     ax1.hist(safety_rates, bins=20, edgecolor='black', alpha=0.7)
+#     ax1.set_xlabel('Safety Rate')
+#     ax1.set_ylabel('Number of Trajectories')
+#     ax1.set_title('Distribution of Safety Rates')
+#     ax1.axvline(np.mean(safety_rates), color='r', linestyle='--', 
+#                 label=f'Mean: {np.mean(safety_rates)*100:.1f}%')
+#     ax1.legend()
     
-    # 2. 按结果分类的安全率箱线图
-    ax2 = axes[0, 1]
-    goal_rates = [t['safety_rate'] for t in trajectories if t['goal_reached']]
-    collision_rates = [t['safety_rate'] for t in trajectories if t['collision']]
+#     # 2. 按结果分类的安全率箱线图
+#     ax2 = axes[0, 1]
+#     goal_rates = [t['safety_rate'] for t in trajectories if t['goal_reached']]
+#     collision_rates = [t['safety_rate'] for t in trajectories if t['collision']]
     
-    data_to_plot = []
-    labels = []
-    if goal_rates:
-        data_to_plot.append(goal_rates)
-        labels.append(f'Goal\n(n={len(goal_rates)})')
-    if collision_rates:
-        data_to_plot.append(collision_rates)
-        labels.append(f'Collision\n(n={len(collision_rates)})')
+#     data_to_plot = []
+#     labels = []
+#     if goal_rates:
+#         data_to_plot.append(goal_rates)
+#         labels.append(f'Goal\n(n={len(goal_rates)})')
+#     if collision_rates:
+#         data_to_plot.append(collision_rates)
+#         labels.append(f'Collision\n(n={len(collision_rates)})')
     
-    ax2.boxplot(data_to_plot, labels=labels)
-    ax2.set_ylabel('Safety Rate')
-    ax2.set_title('Safety Rate by Trajectory Outcome')
-    ax2.grid(True, alpha=0.3)
+#     ax2.boxplot(data_to_plot, labels=labels)
+#     ax2.set_ylabel('Safety Rate')
+#     ax2.set_title('Safety Rate by Trajectory Outcome')
+#     ax2.grid(True, alpha=0.3)
     
-    # 3. 不安全原因饼图
-    ax3 = axes[1, 0]
-    all_reasons = {}
-    for traj in trajectories:
-        if 'unsafe_reasons_count' in traj:
-            for reason, count in traj['unsafe_reasons_count'].items():
-                all_reasons[reason] = all_reasons.get(reason, 0) + count
+#     # 3. 不安全原因饼图
+#     ax3 = axes[1, 0]
+#     all_reasons = {}
+#     for traj in trajectories:
+#         if 'unsafe_reasons_count' in traj:
+#             for reason, count in traj['unsafe_reasons_count'].items():
+#                 all_reasons[reason] = all_reasons.get(reason, 0) + count
     
-    if all_reasons:
-        labels_pie = list(all_reasons.keys())
-        sizes = list(all_reasons.values())
-        ax3.pie(sizes, labels=labels_pie, autopct='%1.1f%%', startangle=90)
-        ax3.set_title('Unsafe Reasons Distribution')
-    else:
-        ax3.text(0.5, 0.5, 'No unsafe points', ha='center', va='center')
-        ax3.set_title('Unsafe Reasons Distribution')
+#     if all_reasons:
+#         labels_pie = list(all_reasons.keys())
+#         sizes = list(all_reasons.values())
+#         ax3.pie(sizes, labels=labels_pie, autopct='%1.1f%%', startangle=90)
+#         ax3.set_title('Unsafe Reasons Distribution')
+#     else:
+#         ax3.text(0.5, 0.5, 'No unsafe points', ha='center', va='center')
+#         ax3.set_title('Unsafe Reasons Distribution')
     
-    # 4. 轨迹安全率时间序列
-    ax4 = axes[1, 1]
-    traj_indices = [t['trajectory_idx'] for t in trajectories]
-    colors = ['green' if t['goal_reached'] else 'red' if t['collision'] else 'gray' 
-              for t in trajectories]
-    ax4.scatter(traj_indices, safety_rates, c=colors, alpha=0.6, s=100)
-    ax4.set_xlabel('Trajectory Index')
-    ax4.set_ylabel('Safety Rate')
-    ax4.set_title('Safety Rate per Trajectory')
-    ax4.axhline(np.mean(safety_rates), color='b', linestyle='--', alpha=0.5, 
-                label=f'Mean: {np.mean(safety_rates)*100:.1f}%')
-    ax4.legend()
-    ax4.grid(True, alpha=0.3)
+#     # 4. 轨迹安全率时间序列
+#     ax4 = axes[1, 1]
+#     traj_indices = [t['trajectory_idx'] for t in trajectories]
+#     colors = ['green' if t['goal_reached'] else 'red' if t['collision'] else 'gray' 
+#               for t in trajectories]
+#     ax4.scatter(traj_indices, safety_rates, c=colors, alpha=0.6, s=100)
+#     ax4.set_xlabel('Trajectory Index')
+#     ax4.set_ylabel('Safety Rate')
+#     ax4.set_title('Safety Rate per Trajectory')
+#     ax4.axhline(np.mean(safety_rates), color='b', linestyle='--', alpha=0.5, 
+#                 label=f'Mean: {np.mean(safety_rates)*100:.1f}%')
+#     ax4.legend()
+#     ax4.grid(True, alpha=0.3)
     
-    # 添加图例
-    from matplotlib.patches import Patch
-    legend_elements = [
-        Patch(facecolor='green', alpha=0.6, label='Goal Reached'),
-        Patch(facecolor='red', alpha=0.6, label='Collision'),
-        Patch(facecolor='gray', alpha=0.6, label='Incomplete')
-    ]
-    ax4.legend(handles=legend_elements, loc='lower right')
+#     # 添加图例
+#     from matplotlib.patches import Patch
+#     legend_elements = [
+#         Patch(facecolor='green', alpha=0.6, label='Goal Reached'),
+#         Patch(facecolor='red', alpha=0.6, label='Collision'),
+#         Patch(facecolor='gray', alpha=0.6, label='Incomplete')
+#     ]
+#     ax4.legend(handles=legend_elements, loc='lower right')
     
-    plt.tight_layout()
+#     plt.tight_layout()
     
-    output_path = Path("visualizations/safety_analysis.png")
-    output_path.parent.mkdir(exist_ok=True)
-    plt.savefig(output_path, dpi=150, bbox_inches='tight')
-    print(f"\n✅ 可视化图表已保存到: {output_path}")
+#     output_path = Path("visualizations/safety_analysis.png")
+#     output_path.parent.mkdir(exist_ok=True)
+#     plt.savefig(output_path, dpi=150, bbox_inches='tight')
+#     print(f"\n✅ 可视化图表已保存到: {output_path}")
     
-    plt.show()
+#     plt.show()
 
 
 if __name__ == "__main__":
