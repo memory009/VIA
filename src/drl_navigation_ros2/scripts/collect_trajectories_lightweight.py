@@ -160,7 +160,7 @@ def main():
     # - "TD3_SafetyCritic_Freeze": 安全批评家模型（支持冻结Task Critic，来自 TD3_lightweight_safety_critic_with_freeze.py）
 
     model_type = "TD3_SafetyCritic_Freeze"  # ← 修改这里选择模型类型
-    model_name = "TD3_safety_epoch_011"     # 要加载的权重文件名（不含后缀）
+    model_name = "TD3_safety_epoch_065"     # 要加载的权重文件名（不含后缀）
     model_dir = Path("models/TD3_safety/Dec09_20-20-51_cheeson_from_baseline_frozen")
 
     # 根据模型类型加载
@@ -255,7 +255,7 @@ def main():
             all_trajectories.append(None)
     
     # ===== 5. 保存轨迹 =====
-    output_path = Path(__file__).parent.parent / "assets" / "trajectories_lightweight_8_polar_freeze_011.pkl"
+    output_path = Path(__file__).parent.parent / "assets" / "trajectories_lightweight_8_polar_freeze_065_v2.pkl"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     
     with open(output_path, 'wb') as f:
