@@ -21,6 +21,7 @@ from TD3.TD3 import TD3
 from TD3.TD3_lightweight import TD3 as TD3_Lightweight
 from TD3.TD3_lightweight_safety_critic import TD3_SafetyCritic as TD3_SafetyCritic_Base
 from TD3.TD3_lightweight_safety_critic_with_freeze import TD3_SafetyCritic as TD3_SafetyCritic_Freeze
+from TD3.TD3_lightweight_BFTQ import TD3_BFTQ
 from ros_python import ROS_env
 from utils import pos_data
 
@@ -59,10 +60,18 @@ def load_eval_scenarios(json_path=None):
     return scenarios
 
 
-def collect_single_trajectory(agent, env, scenario, max_steps=300):
+def collect_single_trajectory(agent, env, scenario, max_steps=300, model_type="TD3_Lightweight", budget=0.5):
     """
     收集单个场景的轨迹（添加位姿追踪）
     修复：使用真实位姿而非估计值
+
+    Args:
+        agent: 训练好的智能体
+        env: ROS环境
+        scenario: 场景配置
+        max_steps: 最大步数
+        model_type: 模型类型 ("TD3_Lightweight", "TD3_SafetyCritic", "TD3_SafetyCritic_Freeze", "TD3_BFTQ")
+        budget: BFTQ模型的budget参数(仅用于TD3_BFTQ)
     """
     from squaternion import Quaternion
     
@@ -113,9 +122,12 @@ def collect_single_trajectory(agent, env, scenario, max_steps=300):
         
         if terminal:
             break
-        
-        # 获取动作
-        action = agent.get_action(state, add_noise=False)
+
+        # 获取动作 (根据模型类型决定是否传入budget参数)
+        if model_type == "TD3_BFTQ":
+            action = agent.get_action(state, budget=budget, add_noise=False)
+        else:
+            action = agent.get_action(state, add_noise=False)
         actions.append(action)
         a_in = [(action[0] + 1) / 2, action[1]]
         
@@ -158,13 +170,21 @@ def main():
     # - "TD3_Lightweight": 基础轻量级TD3模型
     # - "TD3_SafetyCritic": 安全批评家模型（基础版，来自 TD3_lightweight_safety_critic.py）
     # - "TD3_SafetyCritic_Freeze": 安全批评家模型（支持冻结Task Critic，来自 TD3_lightweight_safety_critic_with_freeze.py）
+    # - "TD3_BFTQ": BFTQ模型（Budgeted Reinforcement Learning，来自 TD3_lightweight_BFTQ.py）
 
-    model_type = "TD3_SafetyCritic_Freeze"  # ← 修改这里选择模型类型
+    model_type = "TD3_BFTQ"  # ← 修改这里选择模型类型
+    # model_type = "TD3_SafetyCritic_Freeze"
     # model_type = "TD3_Lightweight"
-    model_name = "TD3_safety_epoch_010"     # 要加载的权重文件名（不含后缀）
+    model_name = "checkpoint_epoch_058"     # 要加载的权重文件名（不含后缀）
+    # model_name = "TD3_BFTQ_best"
+    # model_name = "TD3_safety_epoch_010"
     # model_name = "TD3_lightweight_best"
-    model_dir = Path("models/TD3_safety/Dec09_20-20-51_cheeson_from_baseline_frozen")
+    model_dir = Path("models/TD3_BFTQ_8obs/Dec29_18-02-40_cheeson_bftq")
+    # model_dir = Path("models/TD3_safety/Dec09_20-20-51_cheeson_from_baseline_frozen")
     # model_dir = Path("models/TD3_lightweight/Nov19_01-37-30_cheeson")
+
+    # BFTQ模型专用参数
+    bftq_budget = 0.5  # BFTQ模型的budget参数 (0.0=保守, 1.0=激进)
 
     # 根据模型类型加载
     if model_type == "TD3_SafetyCritic_Freeze":
@@ -220,8 +240,28 @@ def main():
         )
         print(f"  ✅ TD3_Lightweight 模型加载成功")
 
+    elif model_type == "TD3_BFTQ":
+        print(f"  加载 TD3_BFTQ 模型: {model_name}")
+        print(f"  来源: TD3_lightweight_BFTQ.py")
+        print(f"  Budget参数: {bftq_budget}")
+        agent = TD3_BFTQ(
+            state_dim=25,
+            action_dim=2,
+            max_action=1.0,
+            device=device,
+            save_every=0,
+            load_model=False,  # 先不自动加载
+            save_directory=model_dir,
+            model_name=model_name,
+            load_directory=model_dir,
+            run_id="eval_mode",
+        )
+        # 手动加载权重
+        agent.load(filename=model_name, directory=str(model_dir))
+        print(f"  ✅ TD3_BFTQ 模型加载成功")
+
     else:
-        raise ValueError(f"未知的模型类型: {model_type}。请选择: TD3_Lightweight, TD3_SafetyCritic, 或 TD3_SafetyCritic_Freeze")
+        raise ValueError(f"未知的模型类型: {model_type}。请选择: TD3_Lightweight, TD3_SafetyCritic, TD3_SafetyCritic_Freeze, 或 TD3_BFTQ")
     
     # ===== 2. 初始化环境 =====
     print("\n[2/4] 初始化 ROS 环境...")
@@ -243,7 +283,9 @@ def main():
     for i, scenario in enumerate(tqdm(scenarios, desc="收集轨迹")):
         try:
             trajectory_data = collect_single_trajectory(
-                agent, env, scenario, max_steps=300
+                agent, env, scenario, max_steps=300,
+                model_type=model_type,
+                budget=bftq_budget if model_type == "TD3_BFTQ" else 0.5
             )
             all_trajectories.append(trajectory_data)
             
@@ -258,7 +300,8 @@ def main():
             all_trajectories.append(None)
     
     # ===== 5. 保存轨迹 =====
-    output_path = Path(__file__).parent.parent / "assets" / "trajectories_lightweight_8_polar_freeze_010_v9.pkl"
+    output_path = Path(__file__).parent.parent / "assets" / f"trajectories_lightweight_8_polar_{model_type.lower()}_budget{bftq_budget}_v1.pkl"
+    # output_path = Path(__file__).parent.parent / "assets" / "trajectories_lightweight_8_polar_freeze_010_v9.pkl"
     # output_path = Path(__file__).parent.parent / "assets" / "trajectories_lightweight_8_polar_v9.pkl"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     
