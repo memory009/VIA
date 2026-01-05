@@ -182,7 +182,7 @@ class TD3_CVaRCPO(object):
         cvar_alpha=0.1,
         cost_threshold=25.0,
         lambda_lr=0.01,
-        var_lr=0.001,
+        var_lr=0.01,  # ✅ 修正：增加学习率从 0.001 到 0.01
         save_every=0,
         load_model=False,
         save_directory=Path("src/drl_navigation_ros2/models/TD3_cvar_cpo"),
@@ -553,7 +553,8 @@ class TD3_CVaRCPO(object):
         
         if epoch_costs is not None and len(epoch_costs) > 0:
             # 完整版本：使用episode costs估计概率
-            prob_exceed = np.mean([c >= self.var_u.item() for c in epoch_costs])
+            # ✅ 修正：使用 > 而不是 >= 来正确计算 P(C > u_k)
+            prob_exceed = np.mean([c > self.var_u.item() for c in epoch_costs])
             var_grad = 1.0 - (1.0 / (1.0 - self.cvar_alpha)) * prob_exceed
         else:
             # 简化版本：使用sign函数（fallback）
