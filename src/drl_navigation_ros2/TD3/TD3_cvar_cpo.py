@@ -1,4 +1,20 @@
-# TD3 with CVaR-Constrained Policy Optimization (CVar-CPO)_v1
+"""
+TD3 with CVaR-Constrained Policy Optimization
+
+用于Ablation Study：
+- 基础RL参数与baseline保持一致（γ=0.99, lr=1e-4, hidden_dim=26, batch_size=40）
+- CVaR特有参数按照论文设置（var_lr=0.001, lambda_lr=0.001, α=0.1, M=128）
+
+论文: "CVaR-Constrained Policy Optimization for Safe Reinforcement Learning"
+Zhang et al., IEEE TNNLS 2025
+
+核心公式:
+- 公式(5): VaR更新 u_{k+1} = u_k + β_u * [1 - 1/(1-α) * P(C >= u_k)]
+- 公式(19): CVaR估计 
+- 公式(20): Huber Quantile Regression Loss
+- 公式(23): Lagrangian更新 w_{k+1} = proj[w_k - β_w * (b - u_k - V_C(s_0))]
+"""
+
 from pathlib import Path
 
 import numpy as np
@@ -9,9 +25,34 @@ from numpy import inf
 from torch.utils.tensorboard import SummaryWriter
 
 
+# ============================================================================
+# Ablation Study 超参数配置
+# 基础参数：与baseline保持一致
+# CVaR参数：按照论文设置
+# ============================================================================
+
+# ----- 基础RL参数（与你的baseline一致）-----
+BASELINE_GAMMA = 0.99           # 你的baseline使用0.99
+BASELINE_LR = 1e-4              # 你的baseline学习率
+BASELINE_HIDDEN_DIM = 26        # 你的baseline隐藏层（POLAR验证需求）
+BASELINE_BATCH_SIZE = 40        # 你的baseline批次大小
+BASELINE_BUFFER_SIZE = 500000   # 你的baseline buffer大小
+BASELINE_TAU = 0.005            # TD3软更新系数
+BASELINE_POLICY_NOISE = 0.2     # TD3目标策略噪声
+BASELINE_NOISE_CLIP = 0.5       # TD3噪声裁剪
+BASELINE_POLICY_FREQ = 2        # TD3策略更新频率
+
+# ----- CVaR-CPO特有参数（按照论文设置）-----
+CVAR_VAR_LR = 0.001             # β_u，VaR更新步长（论文推荐）
+CVAR_LAMBDA_LR = 0.001          # β_w，Lagrangian更新步长（论文推荐）
+CVAR_ALPHA = 0.9                # α，CVaR风险水平
+CVAR_N_QUANTILES = 128          # M，分位数数量（论文第838页）
+CVAR_COST_THRESHOLD = 25.0      # b，cost约束阈值（二值cost下：允许的雷达距离低于danger_threshold的次数上限）
+
+
 class Actor(nn.Module):
-    """轻量级Actor网络（26维状态扩展版）"""
-    def __init__(self, state_dim, action_dim, hidden_dim=26):
+    """Actor网络（输入扩展状态 s̄ = (s, e_t)）"""
+    def __init__(self, state_dim, action_dim, hidden_dim=BASELINE_HIDDEN_DIM):
         super(Actor, self).__init__()
         
         self.layer_1 = nn.Linear(state_dim, hidden_dim)
@@ -19,8 +60,7 @@ class Actor(nn.Module):
         self.layer_3 = nn.Linear(hidden_dim, action_dim)
         self.tanh = nn.Tanh()
         
-        print(f"🔹 Actor网络: {state_dim} → {hidden_dim} → {hidden_dim} → {action_dim}")
-        print(f"   参数量: {sum(p.numel() for p in self.parameters()):,}")
+        print(f"🔹 Actor: {state_dim} → {hidden_dim} → {hidden_dim} → {action_dim}")
 
     def forward(self, s):
         s = F.relu(self.layer_1(s))
@@ -30,23 +70,21 @@ class Actor(nn.Module):
 
 
 class TaskCritic(nn.Module):
-    """任务 Critic 网络 - 双Q网络结构（用于任务奖励）"""
-    def __init__(self, state_dim, action_dim, hidden_dim=26):
+    """任务Critic - 双Q网络（TD3标准结构）"""
+    def __init__(self, state_dim, action_dim, hidden_dim=BASELINE_HIDDEN_DIM):
         super(TaskCritic, self).__init__()
         
-        # Q1网络
+        # Q1
         self.layer_1 = nn.Linear(state_dim + action_dim, hidden_dim)
         self.layer_2 = nn.Linear(hidden_dim, hidden_dim)
         self.layer_3 = nn.Linear(hidden_dim, 1)
         
-        # Q2网络
+        # Q2
         self.layer_4 = nn.Linear(state_dim + action_dim, hidden_dim)
         self.layer_5 = nn.Linear(hidden_dim, hidden_dim)
         self.layer_6 = nn.Linear(hidden_dim, 1)
         
-        total_params = sum(p.numel() for p in self.parameters())
-        print(f"🔹 Task Critic(双Q): ({state_dim}+{action_dim}) → {hidden_dim} → {hidden_dim} → 1")
-        print(f"   双Q总参数量: {total_params:,}")
+        print(f"🔹 Task Critic(双Q): ({state_dim}+{action_dim}) → {hidden_dim} → 1")
 
     def forward(self, s, a):
         sa = torch.cat([s, a], 1)
@@ -64,98 +102,81 @@ class TaskCritic(nn.Module):
 
 class CVaRCostCritic(nn.Module):
     """
-    CVaR Cost Critic - Quantile Regression Network
-    基于论文 Figure 1 的 Noncrossing Quantile Logit Network
+    CVaR Cost Critic - Noncrossing Quantile Network
     
-    完全符合论文：使用128个quantiles
+    论文Figure 1: 使用 q_i = k * φ_i + d 保证non-crossing property
     """
-    def __init__(self, state_dim, action_dim, hidden_dim=26, n_quantiles=128):
+    def __init__(self, state_dim, action_dim, 
+                 hidden_dim=BASELINE_HIDDEN_DIM,
+                 n_quantiles=CVAR_N_QUANTILES):
         super(CVaRCostCritic, self).__init__()
         
         self.n_quantiles = n_quantiles
         
-        # Quantile fractions τ
+        # τ_k = k/M（论文公式）
         self.register_buffer(
             'tau_hat',
             torch.arange(0, n_quantiles + 1, dtype=torch.float32) / n_quantiles
         )
+        # τ̂_i = (τ_{i-1} + τ_i) / 2
         self.register_buffer(
             'tau',
-            (self.tau_hat[:-1] + self.tau_hat[1:]) / 2.0  # midpoints
+            (self.tau_hat[:-1] + self.tau_hat[1:]) / 2.0
         )
         
-        # MLP for latent features
+        # MLP
         self.fc1 = nn.Linear(state_dim + action_dim, hidden_dim)
         self.fc2 = nn.Linear(hidden_dim, hidden_dim)
         
-        # Weight k and bias d (论文中的 k*φ + d)
+        # Noncrossing quantile: q_i = k * φ_i + d
         self.fc_k = nn.Linear(hidden_dim, 1)
         self.fc_d = nn.Linear(hidden_dim, 1)
-        
-        # Phi network (输出quantile的相对位置)
         self.fc_phi = nn.Linear(hidden_dim, n_quantiles)
         
-        total_params = sum(p.numel() for p in self.parameters())
-        print(f"🔹 CVaR Cost Critic(Quantile): ({state_dim}+{action_dim}) → {hidden_dim} → {n_quantiles} quantiles")
-        print(f"   参数量: {total_params:,}")
-        print(f"   Quantile数量: {n_quantiles}")
+        print(f"🔹 Cost Critic(Quantile): ({state_dim}+{action_dim}) → {hidden_dim} → {n_quantiles} quantiles")
 
     def forward(self, s, a):
-        """
-        Returns:
-            quantiles: (batch_size, n_quantiles) - cost的分位数估计
-        """
         sa = torch.cat([s, a], 1)
         
-        # MLP
         h = F.relu(self.fc1(sa))
         h = F.relu(self.fc2(h))
         
-        # Weight and bias
-        k = self.fc_k(h)  # (batch, 1)
-        d = self.fc_d(h)  # (batch, 1)
+        # k > 0, d任意
+        k = F.softplus(self.fc_k(h))
+        d = self.fc_d(h)
         
-        # Phi (使用Softmax和CumSum保证non-crossing)
-        phi_logits = self.fc_phi(h)  # (batch, n_quantiles)
-        phi_weights = F.softmax(phi_logits, dim=-1)  # (batch, n_quantiles)
-        phi = torch.cumsum(phi_weights, dim=-1)  # (batch, n_quantiles)
+        # φ: softmax + cumsum 保证单调递增
+        phi_logits = self.fc_phi(h)
+        phi_weights = F.softmax(phi_logits, dim=-1)
+        phi = torch.cumsum(phi_weights, dim=-1)
         
-        # Quantiles: q_i = k * φ_i + d
-        quantiles = k * phi + d  # (batch, n_quantiles)
+        # q_i = k * φ_i + d
+        quantiles = k * phi + d
         
-        # 使用softplus确保非负（cost >= 0）
+        # Cost非负
         quantiles = F.softplus(quantiles)
         
         return quantiles
     
-    def compute_cvar(self, quantiles, e_t, alpha=0.1):
+    def compute_cvar(self, quantiles, e_t, alpha=CVAR_ALPHA):
         """
-        计算CVaR值（论文公式19）
+        计算CVaR（论文公式19）
         
-        Args:
-            quantiles: (batch, n_quantiles) - 分位数估计
-            e_t: (batch, 1) - 累积cost阈值
-            alpha: CVaR风险水平（在此公式中不直接使用，保留参数为接口兼容）
-        
-        Returns:
-            cvar: (batch, 1) - CVaR估计
-        
-        注意：论文公式(19)的CVaR是基于e_t阈值的条件期望，不是基于α-quantile。
-        公式：V̂_C(s̄_t) = Σ (τ_{i+1} - τ_i) * q_i(s) * I(q_i(s) >= e_t)
+        V̂_C(s̄_t) = Σ (τ_{i+1} - τ_i) * q_i(s) * I(q_i(s) >= e_t)
         """
         batch_size = quantiles.shape[0]
         
-        # 权重（每个quantile的宽度）
-        weights = (self.tau_hat[1:] - self.tau_hat[:-1]).unsqueeze(0)  # (1, n_quantiles)
-        weights = weights.expand(batch_size, -1)  # (batch, n_quantiles)
+        # 权重
+        weights = (self.tau_hat[1:] - self.tau_hat[:-1]).unsqueeze(0)
+        weights = weights.expand(batch_size, -1)
         
-        # 指示函数：I(q_i >= e_t)
-        indicators = (quantiles >= e_t).float()  # (batch, n_quantiles)
+        # 指示函数
+        indicators = (quantiles >= e_t).float()
         
         # 加权求和
-        cvar = torch.sum(weights * quantiles * indicators, dim=1, keepdim=True)  # (batch, 1)
+        cvar = torch.sum(weights * quantiles * indicators, dim=1, keepdim=True)
         
-        # 归一化（如果没有任何quantile >= e_t，返回最大quantile）
+        # 归一化
         normalizer = torch.sum(weights * indicators, dim=1, keepdim=True)
         normalizer = torch.clamp(normalizer, min=1e-8)
         cvar = cvar / normalizer
@@ -165,10 +186,11 @@ class CVaRCostCritic(nn.Module):
 
 class TD3_CVaRCPO(object):
     """
-    TD3 with CVaR-Constrained Policy Optimization
+    TD3 with CVaR-CPO (Ablation Study Version)
     
-    基于论文 "CVaR-Constrained Policy Optimization for Safe Reinforcement Learning"
-    使用状态扩展 s̄ = (s, e) 和 quantile regression 估计 CVaR
+    参数设计原则:
+    - 基础RL参数: 与baseline一致，确保公平对比
+    - CVaR特有参数: 按论文设置
     """
     
     def __init__(
@@ -177,114 +199,94 @@ class TD3_CVaRCPO(object):
         action_dim,
         max_action,
         device,
-        lr=1e-4,
-        hidden_dim=26,
-        n_quantiles=128,  # ✅ 修正：默认值改为128，与论文一致
-        cvar_alpha=0.1,
-        cost_threshold=25.0,
-        lambda_lr=0.01,
-        var_lr=0.01,  # ✅ 修正：增加学习率从 0.001 到 0.01
+        # 基础参数（与baseline一致）
+        lr=BASELINE_LR,
+        hidden_dim=BASELINE_HIDDEN_DIM,
+        gamma=BASELINE_GAMMA,
+        # CVaR参数（按论文设置）
+        n_quantiles=CVAR_N_QUANTILES,
+        cvar_alpha=CVAR_ALPHA,
+        cost_threshold=CVAR_COST_THRESHOLD,
+        var_lr=CVAR_VAR_LR,
+        lambda_lr=CVAR_LAMBDA_LR,
+        # 其他
         save_every=0,
         load_model=False,
-        save_directory=Path("src/drl_navigation_ros2/models/TD3_cvar_cpo"),
+        save_directory=Path("models/TD3_cvar_cpo"),
         model_name="TD3_cvar_cpo",
-        load_directory=Path("src/drl_navigation_ros2/models/TD3_cvar_cpo"),
+        load_directory=Path("models/TD3_cvar_cpo"),
         run_id=None,
     ):
         print("\n" + "="*80)
-        print("🚀 初始化 TD3 with CVaR-CPO")
+        print("🚀 TD3 with CVaR-CPO (Ablation Study Version)")
         print("="*80)
         
         self.device = device
-        self.original_state_dim = state_dim  # 原始状态维度（25）
-        self.augmented_state_dim = state_dim + 1  # 扩展状态维度（26）= (s, e)
+        self.original_state_dim = state_dim
+        self.augmented_state_dim = state_dim + 1  # s̄ = (s, e_t)
         self.action_dim = action_dim
         self.max_action = max_action
         
-        # CVaR参数
+        # 保存参数
+        self.gamma = gamma
         self.cvar_alpha = cvar_alpha
         self.cost_threshold = cost_threshold
         self.n_quantiles = n_quantiles
+        self.var_lr = var_lr
+        self.lambda_lr = lambda_lr
         
-        # VaR参数 u_k（论文公式5）
-        self.var_u = nn.Parameter(torch.tensor([0.0], device=device))
-        self.var_optimizer = torch.optim.Adam([self.var_u], lr=var_lr)
+        # VaR参数 u（论文: u⁰ = ?）论文未明确说明，初始化为0计算不了，故初始化为 10.0，预计靠近危险区域以及碰撞值最坏的10%会达到10.0
+        self.var_u = torch.tensor([0.0], device=device)
         
-        # Lagrangian乘子 w（论文Lemma 2）
-        self.lambda_w = nn.Parameter(torch.tensor([1.0], device=device))
-        self.lambda_optimizer = torch.optim.Adam([self.lambda_w], lr=lambda_lr)
+        # Lagrangian乘子 w
+        self.lambda_w = torch.tensor([1.0], device=device)
         
-        # Temperature parameter v（论文Theorem 1）
-        self.temperature_v = 1.0  # 固定值
+        print(f"\n📊 Ablation Study 参数配置:")
+        print(f"   ─── 基础参数（与baseline一致）───")
+        print(f"   γ (discount): {gamma}")
+        print(f"   lr (network): {lr}")
+        print(f"   hidden_dim: {hidden_dim}")
+        print(f"   ─── CVaR参数（按论文设置）───")
+        print(f"   β_u (var_lr): {var_lr}")
+        print(f"   β_w (lambda_lr): {lambda_lr}")
+        print(f"   α (CVaR level): {cvar_alpha}")
+        print(f"   M (quantiles): {n_quantiles}")
+        print(f"   b (cost threshold): {cost_threshold}")
         
-        print(f"📊 CVaR参数:")
-        print(f"   α (confidence level): {cvar_alpha}")
-        print(f"   Cost threshold b: {cost_threshold}")
-        print(f"   VaR初始值 u: {self.var_u.item():.3f}")
-        print(f"   Lagrangian初始值 w: {self.lambda_w.item():.3f}")
-        print(f"   Temperature v: {self.temperature_v}")
-        
-        # ===== Actor (输入扩展状态) =====
-        self.actor = Actor(self.augmented_state_dim, action_dim, hidden_dim).to(self.device)
-        self.actor_target = Actor(self.augmented_state_dim, action_dim, hidden_dim).to(self.device)
+        # 网络初始化
+        self.actor = Actor(self.augmented_state_dim, action_dim, hidden_dim).to(device)
+        self.actor_target = Actor(self.augmented_state_dim, action_dim, hidden_dim).to(device)
         self.actor_target.load_state_dict(self.actor.state_dict())
-        self.actor_optimizer = torch.optim.Adam(params=self.actor.parameters(), lr=lr)
+        self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=lr)
 
-        # ===== Task Critics (输入扩展状态) =====
-        self.task_critic = TaskCritic(self.augmented_state_dim, action_dim, hidden_dim).to(self.device)
-        self.task_critic_target = TaskCritic(self.augmented_state_dim, action_dim, hidden_dim).to(self.device)
+        self.task_critic = TaskCritic(self.augmented_state_dim, action_dim, hidden_dim).to(device)
+        self.task_critic_target = TaskCritic(self.augmented_state_dim, action_dim, hidden_dim).to(device)
         self.task_critic_target.load_state_dict(self.task_critic.state_dict())
-        self.task_critic_optimizer = torch.optim.Adam(params=self.task_critic.parameters(), lr=lr)
+        self.task_critic_optimizer = torch.optim.Adam(self.task_critic.parameters(), lr=lr)
 
-        # ===== CVaR Cost Critics (输入扩展状态，输出quantiles) =====
-        self.cost_critic = CVaRCostCritic(
-            self.augmented_state_dim, action_dim, hidden_dim, n_quantiles
-        ).to(self.device)
-        self.cost_critic_target = CVaRCostCritic(
-            self.augmented_state_dim, action_dim, hidden_dim, n_quantiles
-        ).to(self.device)
+        self.cost_critic = CVaRCostCritic(self.augmented_state_dim, action_dim, hidden_dim, n_quantiles).to(device)
+        self.cost_critic_target = CVaRCostCritic(self.augmented_state_dim, action_dim, hidden_dim, n_quantiles).to(device)
         self.cost_critic_target.load_state_dict(self.cost_critic.state_dict())
-        self.cost_critic_optimizer = torch.optim.Adam(params=self.cost_critic.parameters(), lr=lr)
+        self.cost_critic_optimizer = torch.optim.Adam(self.cost_critic.parameters(), lr=lr)
         
-        # 计算总参数量
-        total_params = (
-            sum(p.numel() for p in self.actor.parameters()) +
-            sum(p.numel() for p in self.task_critic.parameters()) +
-            sum(p.numel() for p in self.cost_critic.parameters())
-        )
-        print(f"\n✅ 网络总参数量: {total_params:,}")
-        print(f"📍 设备: {device}")
-        print(f"🎯 隐藏层维度: {hidden_dim}")
-        print(f"📐 状态维度: {self.original_state_dim} → {self.augmented_state_dim} (扩展)")
-        print("="*80 + "\n")
-        
+        # TensorBoard
         if run_id:
-            tensorboard_log_dir = f"runs/{run_id}"
-            self.writer = SummaryWriter(log_dir=tensorboard_log_dir)
+            self.writer = SummaryWriter(log_dir=f"runs/{run_id}")
         else:
             self.writer = SummaryWriter()
         
         self.iter_count = 0
-        self.discount = 0.99  # γ
         
         if load_model:
             self.load(filename=model_name, directory=load_directory)
         self.save_every = save_every
         self.model_name = model_name
         self.save_directory = save_directory
+        
+        print("="*80 + "\n")
 
     def augment_state(self, state, e_t):
-        """
-        状态扩展: s̄ = (s, e_t)
-
-        Args:
-            state: (batch, state_dim) 或 (state_dim,) - list/numpy/tensor
-            e_t: (batch, 1) 或 scalar
-
-        Returns:
-            augmented_state: (batch, state_dim+1) 或 (state_dim+1,)
-        """
-        # 转换 state 为 tensor (支持list, numpy, tensor)
+        """状态扩展: s̄ = (s, e_t)"""
         if isinstance(state, list):
             state = torch.FloatTensor(state).to(self.device)
         elif isinstance(state, np.ndarray):
@@ -292,7 +294,6 @@ class TD3_CVaRCPO(object):
         elif isinstance(state, torch.Tensor):
             state = state.to(self.device)
 
-        # 转换 e_t 为 tensor
         if isinstance(e_t, (int, float)):
             e_t = torch.FloatTensor([e_t]).to(self.device)
         elif isinstance(e_t, np.ndarray):
@@ -300,58 +301,44 @@ class TD3_CVaRCPO(object):
         elif isinstance(e_t, torch.Tensor):
             e_t = e_t.to(self.device)
         
-        # 处理维度
         if state.dim() == 1:
-            state = state.unsqueeze(0)  # (1, state_dim)
+            state = state.unsqueeze(0)
         if e_t.dim() == 0:
-            e_t = e_t.unsqueeze(0).unsqueeze(0)  # (1, 1)
+            e_t = e_t.unsqueeze(0).unsqueeze(0)
         elif e_t.dim() == 1:
-            e_t = e_t.unsqueeze(1)  # (batch, 1)
+            e_t = e_t.unsqueeze(1)
         
-        augmented = torch.cat([state, e_t], dim=1)  # (batch, state_dim+1)
-        return augmented
+        return torch.cat([state, e_t], dim=1)
 
     def get_action(self, state, e_t, add_noise):
-        """
-        获取动作（输入扩展状态）
-        
-        Args:
-            state: 原始状态 (state_dim,)
-            e_t: 累积cost阈值 scalar
-            add_noise: 是否添加探索噪声
-        """
+        """获取动作"""
         augmented_state = self.augment_state(state, e_t)
         action = self.actor(augmented_state).cpu().data.numpy().flatten()
         
         if add_noise:
-            noise = np.random.normal(0, 0.2, size=self.action_dim)
+            noise = np.random.normal(0, BASELINE_POLICY_NOISE, size=self.action_dim)
             action = (action + noise).clip(-self.max_action, self.max_action)
         
         return action
 
     def act(self, state, e_t):
-        """确定性动作（用于评估）"""
+        """确定性动作（评估用）"""
         return self.get_action(state, e_t, add_noise=False)
 
     def train(
         self,
         replay_buffer,
         iterations,
-        batch_size,
-        discount=0.99,
-        tau=0.005,
-        policy_noise=0.2,
-        noise_clip=0.5,
-        policy_freq=2,
+        batch_size=BASELINE_BATCH_SIZE,
+        discount=None,
+        tau=BASELINE_TAU,
+        policy_noise=BASELINE_POLICY_NOISE,
+        noise_clip=BASELINE_NOISE_CLIP,
+        policy_freq=BASELINE_POLICY_FREQ,
     ):
-        """
-        训练循环 - CVaR-CPO版本
-        
-        核心改进：
-        1. 使用Huber Quantile Regression Loss训练cost critic
-        2. Actor loss使用简化版本（保持可比性）
-        3. 交替更新VaR参数和Lagrangian乘子
-        """
+        """训练循环"""
+        if discount is None:
+            discount = self.gamma
         
         av_task_Q = 0.0
         av_cost_cvar = 0.0
@@ -359,33 +346,32 @@ class TD3_CVaRCPO(object):
         av_task_loss = 0.0
         av_cost_loss = 0.0
         av_actor_loss = 0.0
-        
-        # Cost统计
         av_cost_in_batch = 0.0
         max_cost_in_batch = 0.0
+        av_e_t_in_batch = 0.0
+        min_e_t_in_batch = inf
         
         for it in range(iterations):
-            # 采样 batch（包含 cost 和 e_t）
-            batch = replay_buffer.sample_batch_with_augmented_state(batch_size, self.var_u.item())
+            # 采样（使用buffer中存储的真实e_t）
+            batch = replay_buffer.sample_batch_with_augmented_state(batch_size)
             
-            state = torch.Tensor(batch['states']).to(self.device)  # (batch, state_dim+1)
-            next_state = torch.Tensor(batch['next_states']).to(self.device)  # (batch, state_dim+1)
+            state = torch.Tensor(batch['states']).to(self.device)
+            next_state = torch.Tensor(batch['next_states']).to(self.device)
             action = torch.Tensor(batch['actions']).to(self.device)
             reward = torch.Tensor(batch['rewards']).to(self.device)
             cost = torch.Tensor(batch['costs']).to(self.device)
             done = torch.Tensor(batch['dones']).to(self.device)
-            e_t = torch.Tensor(batch['e_t']).to(self.device)  # (batch, 1)
-            next_e_t = torch.Tensor(batch['next_e_t']).to(self.device)  # (batch, 1)
+            e_t = torch.Tensor(batch['e_t']).to(self.device)
             
-            # Cost统计
+            # 统计
             av_cost_in_batch += cost.mean().item()
             max_cost_in_batch = max(max_cost_in_batch, cost.max().item())
+            av_e_t_in_batch += e_t.mean().item()
+            min_e_t_in_batch = min(min_e_t_in_batch, e_t.min().item())
             
-            # ===== 计算 Target Q =====
+            # Target计算
             with torch.no_grad():
                 next_action = self.actor_target(next_state)
-                
-                # 添加噪声
                 noise = torch.randn_like(next_action) * policy_noise
                 noise = noise.clamp(-noise_clip, noise_clip)
                 next_action = (next_action + noise).clamp(-self.max_action, self.max_action)
@@ -397,14 +383,11 @@ class TD3_CVaRCPO(object):
                 max_task_Q = max(max_task_Q, target_Q_task.max().item())
                 target_Q_task = reward + (1 - done) * discount * target_Q_task
                 
-                # Cost quantiles target（论文的distributional Bellman）
-                target_quantiles = self.cost_critic_target(next_state, next_action)  # (batch, n_quantiles)
-                # Bellman: C + γ * Z_C(s', a')
-                # cost: (batch, 1) -> (batch, n_quantiles) 广播到所有quantiles
-                # done: (batch, 1) -> (batch, n_quantiles)
+                # Cost quantiles target
+                target_quantiles = self.cost_critic_target(next_state, next_action)
                 target_quantiles = cost + (1 - done) * discount * target_quantiles
             
-            # ===== 更新 Task Critics =====
+            # 更新Task Critics
             current_Q1, current_Q2 = self.task_critic(state, action)
             task_loss = F.mse_loss(current_Q1, target_Q_task) + F.mse_loss(current_Q2, target_Q_task)
             
@@ -413,10 +396,8 @@ class TD3_CVaRCPO(object):
             self.task_critic_optimizer.step()
             av_task_loss += task_loss.item()
             
-            # ===== 更新 Cost Critics (Huber Quantile Regression) =====
-            current_quantiles = self.cost_critic(state, action)  # (batch, n_quantiles)
-            
-            # Quantile Huber Loss（论文公式20）
+            # 更新Cost Critics（Huber Quantile Loss）
+            current_quantiles = self.cost_critic(state, action)
             cost_loss = self.quantile_huber_loss(current_quantiles, target_quantiles)
             
             self.cost_critic_optimizer.zero_grad()
@@ -424,34 +405,21 @@ class TD3_CVaRCPO(object):
             self.cost_critic_optimizer.step()
             av_cost_loss += cost_loss.item()
             
-            # 计算CVaR用于监控
+            # CVaR监控
             with torch.no_grad():
-                cost_cvar = self.cost_critic.compute_cvar(
-                    current_quantiles, e_t, alpha=self.cvar_alpha
-                )
+                cost_cvar = self.cost_critic.compute_cvar(current_quantiles, e_t, self.cvar_alpha)
                 av_cost_cvar += cost_cvar.mean().item()
             
-            # ===== 更新 Actor =====
+            # 更新Actor
             if it % policy_freq == 0:
-                # ✅ 修正3：添加完整的Actor loss说明
-                # 论文Lemma 3使用KL-divergence based update:
-                # ∇_θ L(π_θ, π*) = ∇_θ D_KL(π_θ||π_θk) - 1/v * E[∇_θ π_θ/π_θk * (A_R - w*A_C)]
-                # 
-                # 这里采用简化版本: -Q_task + w * CVaR_cost
-                # 简化理由：
-                # 1. 保持和baseline的可比性（相同actor loss形式）
-                # 2. 核心思想相同（最大化reward - 惩罚cost）
-                # 3. 避免额外的π*计算和KL项，更稳定
-                # 4. CVaR约束的核心在Cost Critic（完全准确），不在Actor loss形式
                 actor_action = self.actor(state)
                 Q_task, _ = self.task_critic(state, actor_action)
                 
-                # 计算CVaR cost（这是与baseline的关键差异）
                 cost_quantiles = self.cost_critic(state, actor_action)
                 cost_cvar = self.cost_critic.compute_cvar(cost_quantiles, e_t, self.cvar_alpha)
                 
-                # Actor loss（简化版）
-                actor_loss = -Q_task.mean() + self.lambda_w * cost_cvar.mean()
+                # Actor loss: -Q_task + w * CVaR_cost
+                actor_loss = -Q_task.mean() + self.lambda_w.item() * cost_cvar.mean()
                 
                 self.actor_optimizer.zero_grad()
                 actor_loss.backward()
@@ -459,41 +427,30 @@ class TD3_CVaRCPO(object):
                 av_actor_loss += actor_loss.item()
                 
                 # Soft update
-                for param, target_param in zip(
-                    self.actor.parameters(), self.actor_target.parameters()
-                ):
+                for param, target_param in zip(self.actor.parameters(), self.actor_target.parameters()):
                     target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
                 
-                for param, target_param in zip(
-                    self.task_critic.parameters(), self.task_critic_target.parameters()
-                ):
+                for param, target_param in zip(self.task_critic.parameters(), self.task_critic_target.parameters()):
                     target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
                 
-                for param, target_param in zip(
-                    self.cost_critic.parameters(), self.cost_critic_target.parameters()
-                ):
+                for param, target_param in zip(self.cost_critic.parameters(), self.cost_critic_target.parameters()):
                     target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
         
         self.iter_count += 1
         
-        # ===== TensorBoard 记录 =====
+        # TensorBoard
         self.writer.add_scalar("train/task_loss", av_task_loss / iterations, self.iter_count)
         self.writer.add_scalar("train/cost_loss", av_cost_loss / iterations, self.iter_count)
-        
         num_actor_updates = iterations // policy_freq
         if num_actor_updates > 0:
             self.writer.add_scalar("train/actor_loss", av_actor_loss / num_actor_updates, self.iter_count)
-        
         self.writer.add_scalar("train/avg_task_Q", av_task_Q / iterations, self.iter_count)
         self.writer.add_scalar("train/avg_cost_cvar", av_cost_cvar / iterations, self.iter_count)
         self.writer.add_scalar("train/max_task_Q", max_task_Q, self.iter_count)
-        
-        self.writer.add_scalar("train/cost_stats/avg_cost_in_batch", 
-                              av_cost_in_batch / iterations, self.iter_count)
-        self.writer.add_scalar("train/cost_stats/max_cost_in_batch", 
-                              max_cost_in_batch, self.iter_count)
-        
-        # CVaR参数监控
+        self.writer.add_scalar("train/cost_stats/avg_cost_in_batch", av_cost_in_batch / iterations, self.iter_count)
+        self.writer.add_scalar("train/cost_stats/max_cost_in_batch", max_cost_in_batch, self.iter_count)
+        self.writer.add_scalar("train/e_t_stats/avg_e_t_in_batch", av_e_t_in_batch / iterations, self.iter_count)
+        self.writer.add_scalar("train/e_t_stats/min_e_t_in_batch", min_e_t_in_batch, self.iter_count)
         self.writer.add_scalar("train/cvar_params/var_u", self.var_u.item(), self.iter_count)
         self.writer.add_scalar("train/cvar_params/lambda_w", self.lambda_w.item(), self.iter_count)
         
@@ -503,28 +460,14 @@ class TD3_CVaRCPO(object):
     def quantile_huber_loss(self, current_quantiles, target_quantiles, kappa=1.0):
         """
         Huber Quantile Regression Loss（论文公式20）
-        
-        Args:
-            current_quantiles: (batch, n_quantiles)
-            target_quantiles: (batch, n_quantiles)
-            kappa: Huber loss threshold
-        
-        Returns:
-            loss: scalar
         """
-        batch_size = current_quantiles.shape[0]
         n_quantiles = current_quantiles.shape[1]
         
-        # 扩展维度进行矩阵运算
-        # current: (batch, n_quantiles, 1)
-        # target: (batch, 1, n_quantiles)
         current = current_quantiles.unsqueeze(2)
         target = target_quantiles.unsqueeze(1)
         
-        # TD error: δ_ij = target_j - current_i
-        td_errors = target - current  # (batch, n_quantiles, n_quantiles)
+        td_errors = target - current
         
-        # Huber loss
         abs_errors = torch.abs(td_errors)
         huber = torch.where(
             abs_errors <= kappa,
@@ -532,63 +475,70 @@ class TD3_CVaRCPO(object):
             kappa * (abs_errors - 0.5 * kappa)
         )
         
-        # Quantile weights: τ - I(δ < 0)
-        tau = self.cost_critic.tau.view(1, n_quantiles, 1)  # (1, n_quantiles, 1)
+        tau = self.cost_critic.tau.view(1, n_quantiles, 1)
         quantile_weights = torch.abs(tau - (td_errors < 0).float())
         
-        # Quantile Huber loss
         loss = (quantile_weights * huber).mean()
         
         return loss
     
     def update_var_and_lambda(self, avg_episode_cost, epoch_costs=None):
         """
-        ✅ 修正2：改进VaR更新，使用概率估计更接近论文公式5
+        更新VaR和Lagrangian（严格按照论文公式5和23）
         
-        Args:
-            avg_episode_cost: 当前epoch的平均episode cost
-            epoch_costs: 当前epoch所有episode的cost列表（用于估计概率）
+        公式(5): u^{k+1} = u^k + β_u * [1 - 1/(1-α) * P(C >= u^k)]
+        公式(23): w^{k+1} = proj[w^k - β_w * (b - u^k - V_C(s̄_0))]
+        
+        修正: 第一个epoch用数据的90%分位数初始化u
         """
-        # 更新VaR（论文公式5）
-        # u_{k+1} = u_k + β_u * [1 - 1/(1-α) * P(C >= u_k)]
+        old_var_u = self.var_u.item()
+        old_lambda_w = self.lambda_w.item()
         
         if epoch_costs is not None and len(epoch_costs) > 0:
-            # 完整版本：使用episode costs估计概率
-            # ✅ 修正：使用 > 而不是 >= 来正确计算 P(C > u_k)
-            prob_exceed = np.mean([c > self.var_u.item() for c in epoch_costs])
-            var_grad = 1.0 - (1.0 / (1.0 - self.cvar_alpha)) * prob_exceed
+            # 第一个epoch：用真实数据的(1-α)分位数初始化u
+            if old_var_u == 0.0:
+                initial_u = np.percentile(epoch_costs, self.cvar_alpha * 100)
+                self.var_u = torch.tensor([initial_u], device=self.device)
+                print(f"   📊 初始化VaR u = {initial_u:.4f} (α={self.cvar_alpha}, 关注worst {(1-self.cvar_alpha)*100:.0f}%)")
+
+                # 第一个epoch只初始化u，跳过公式5更新
+                prob_exceed = 1.0  # 用于打印
+                var_update = 0.0
+            else:
+                # 后续epoch：正常用公式5更新
+                prob_exceed = np.mean([c >= old_var_u for c in epoch_costs])
+                # var_update = 1.0 - (1.0 / (1.0 - self.cvar_alpha)) * prob_exceed
+                # 原论文公式5符号有误
+                var_update = prob_exceed - (1.0 - self.cvar_alpha)
+                new_var_u = old_var_u + self.var_lr * var_update
+                
+                # 只确保u非负（论文原文无clamp操作）
+                new_var_u = max(new_var_u, 0.0)
+                
+                self.var_u = torch.tensor([new_var_u], device=self.device)
         else:
-            # 简化版本：使用sign函数（fallback）
-            var_grad = 1.0 if avg_episode_cost > self.var_u.item() else -1.0
+            prob_exceed = 0.0
+            var_update = 0.0
         
-        self.var_optimizer.zero_grad()
-        # 确保梯度类型与参数一致（float32）
-        self.var_u.grad = torch.tensor([-var_grad], dtype=self.var_u.dtype, device=self.device)
-        self.var_optimizer.step()
-
-        # 限制u的范围
-        with torch.no_grad():
-            self.var_u.data.clamp_(min=0.0, max=self.cost_threshold)
-
-        # 更新Lagrangian乘子w（论文公式23）
-        # w_{k+1} = max(0, w_k - β_w * (b - u_k - V_C(s_0)))
-        constraint_violation = self.cost_threshold - self.var_u.item() - avg_episode_cost
-
-        self.lambda_optimizer.zero_grad()
-        # 确保梯度类型与参数一致（float32）
-        self.lambda_w.grad = torch.tensor([constraint_violation], dtype=self.lambda_w.dtype, device=self.device)
-        self.lambda_optimizer.step()
+        # 公式(23): Lagrangian更新（每个epoch都执行）
+        constraint_slack = self.cost_threshold - self.var_u.item() - avg_episode_cost
+        new_lambda_w = old_lambda_w - self.lambda_lr * constraint_slack
+        new_lambda_w = np.clip(new_lambda_w, 0.0, 100.0)
+        self.lambda_w = torch.tensor([new_lambda_w], device=self.device)
         
-        # 限制w的范围
-        with torch.no_grad():
-            self.lambda_w.data.clamp_(min=0.0, max=100.0)
+        # TensorBoard
+        self.writer.add_scalar("epoch/var_u", self.var_u.item(), self.iter_count)
+        self.writer.add_scalar("epoch/lambda_w", self.lambda_w.item(), self.iter_count)
+        self.writer.add_scalar("epoch/prob_exceed_var", prob_exceed, self.iter_count)
+        self.writer.add_scalar("epoch/var_update", var_update, self.iter_count)
+        self.writer.add_scalar("epoch/constraint_slack", constraint_slack, self.iter_count)
         
-        # 记录
-        self.writer.add_scalar("epoch/var_u_update", self.var_u.item(), self.iter_count)
-        self.writer.add_scalar("epoch/lambda_w_update", self.lambda_w.item(), self.iter_count)
-        self.writer.add_scalar("epoch/constraint_violation", constraint_violation, self.iter_count)
-        if epoch_costs is not None:
-            self.writer.add_scalar("epoch/prob_exceed_var", prob_exceed, self.iter_count)
+        # 打印调试信息
+        print(f"   📊 公式(5) VaR更新:")
+        print(f"      P(C >= u) = {prob_exceed:.3f}")
+        print(f"      update = 1 - {1/(1-self.cvar_alpha):.3f} × {prob_exceed:.3f} = {var_update:.4f}")
+        print(f"   📊 公式(23) Lagrangian更新:")
+        print(f"      约束余量 = {self.cost_threshold} - {self.var_u.item():.2f} - {avg_episode_cost:.2f} = {constraint_slack:.2f}")
 
     def save(self, filename, directory):
         Path(directory).mkdir(parents=True, exist_ok=True)
@@ -600,49 +550,28 @@ class TD3_CVaRCPO(object):
         torch.save(self.cost_critic.state_dict(), f"{directory}/{filename}_cost_critic.pth")
         torch.save(self.cost_critic_target.state_dict(), f"{directory}/{filename}_cost_critic_target.pth")
         
-        # 保存CVaR参数
         torch.save({
             'var_u': self.var_u,
             'lambda_w': self.lambda_w,
         }, f"{directory}/{filename}_cvar_params.pth")
 
     def load(self, filename, directory):
-        self.actor.load_state_dict(
-            torch.load(f"{directory}/{filename}_actor.pth", map_location=self.device)
-        )
-        self.actor_target.load_state_dict(
-            torch.load(f"{directory}/{filename}_actor_target.pth", map_location=self.device)
-        )
-        self.task_critic.load_state_dict(
-            torch.load(f"{directory}/{filename}_task_critic.pth", map_location=self.device)
-        )
-        self.task_critic_target.load_state_dict(
-            torch.load(f"{directory}/{filename}_task_critic_target.pth", map_location=self.device)
-        )
-        self.cost_critic.load_state_dict(
-            torch.load(f"{directory}/{filename}_cost_critic.pth", map_location=self.device)
-        )
-        self.cost_critic_target.load_state_dict(
-            torch.load(f"{directory}/{filename}_cost_critic_target.pth", map_location=self.device)
-        )
+        self.actor.load_state_dict(torch.load(f"{directory}/{filename}_actor.pth", map_location=self.device))
+        self.actor_target.load_state_dict(torch.load(f"{directory}/{filename}_actor_target.pth", map_location=self.device))
+        self.task_critic.load_state_dict(torch.load(f"{directory}/{filename}_task_critic.pth", map_location=self.device))
+        self.task_critic_target.load_state_dict(torch.load(f"{directory}/{filename}_task_critic_target.pth", map_location=self.device))
+        self.cost_critic.load_state_dict(torch.load(f"{directory}/{filename}_cost_critic.pth", map_location=self.device))
+        self.cost_critic_target.load_state_dict(torch.load(f"{directory}/{filename}_cost_critic_target.pth", map_location=self.device))
         
-        # 加载CVaR参数
         cvar_params = torch.load(f"{directory}/{filename}_cvar_params.pth", map_location=self.device)
-        self.var_u.data = cvar_params['var_u'].data
-        self.lambda_w.data = cvar_params['lambda_w'].data
+        self.var_u = cvar_params['var_u'].to(self.device)
+        self.lambda_w = cvar_params['lambda_w'].to(self.device)
         
-        print(f"Loaded weights from: {directory} to device: {self.device}")
+        print(f"✅ Loaded model from: {directory}/{filename}")
 
     def prepare_state(self, latest_scan, distance, cos, sin, collision, goal, action):
-        """
-        准备状态（与baseline相同，但不包含e_t的扩展，那部分在训练时处理）
-        
-        Returns:
-            state: (state_dim,) - 原始状态，不包含e_t
-            terminal: bool
-        """
+        """准备状态（不含e_t扩展，与baseline一致）"""
         latest_scan = np.array(latest_scan)
-        
         inf_mask = np.isinf(latest_scan)
         latest_scan[inf_mask] = 7.0
         
@@ -651,8 +580,8 @@ class TD3_CVaRCPO(object):
         
         min_values = []
         for i in range(0, len(latest_scan), bin_size):
-            bin = latest_scan[i : i + min(bin_size, len(latest_scan) - i)]
-            min_values.append(min(bin))
+            bin_data = latest_scan[i : i + min(bin_size, len(latest_scan) - i)]
+            min_values.append(min(bin_data))
         
         state = min_values + [distance, cos, sin] + [action[0], action[1]]
         
