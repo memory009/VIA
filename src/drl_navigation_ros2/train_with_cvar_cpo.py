@@ -3,7 +3,11 @@
 """
 CVaR-CPO训练脚本 (Ablation Study Version)
 
-训练流程与baseline保持一致：
+训练流程：
+- Warm-up Phase: 运行70个episodes收集cost统计，初始化var_u，不训练
+- Training Phase: 100个epochs，每个epoch 70 episodes
+
+训练细节与baseline保持一致：
 - 每2个episodes训练一次
 - 每次训练500 iterations
 - 每个iteration的batch_size为40
@@ -24,7 +28,7 @@ import torch
 import numpy as np
 
 # 导入模型和buffer
-from TD3.TD3_cvar_cpo import TD3_CVaRCPO, BASELINE_BATCH_SIZE, BASELINE_BUFFER_SIZE, BASELINE_GAMMA
+from TD3.TD3_cvar_cpo import TD3_CVaRCPO, BASELINE_BATCH_SIZE, BASELINE_BUFFER_SIZE, BASELINE_GAMMA, CVAR_ALPHA
 from cvar_replay_buffer import CVaRReplayBuffer
 
 
@@ -61,6 +65,83 @@ def compute_cost(laser_scan, collision, danger_threshold=0.5):
         cost = 0.0
     
     return cost
+
+
+def run_warmup_phase(model, env, episodes_per_epoch, max_steps, gamma):
+    """
+    Warm-up Phase: 收集cost统计，初始化var_u
+    
+    - 运行与正式epoch相同数量的episodes
+    - 只收集episode_costs统计
+    - 不存buffer、不训练
+    - 返回初始化后的var_u值
+    """
+    print("\n" + "=" * 80)
+    print("🔥 Warm-up Phase (不计入epoch)")
+    print("=" * 80)
+    print(f"   目的: 收集{episodes_per_epoch}个episodes的cost统计，初始化VaR参数u")
+    print(f"   注意: 此阶段不存储到buffer，不进行网络训练")
+    print("=" * 80)
+    
+    warmup_costs = []
+    
+    for episode_idx in range(1, episodes_per_epoch + 1):
+        latest_scan, distance, cos, sin, collision, goal, a, reward = env.reset()
+        
+        steps = 0
+        episode_cost = 0.0
+        
+        # Warm-up阶段使用临时的e_t=0（不影响cost统计）
+        e_t = 0.0
+        
+        while True:
+            state, terminal = model.prepare_state(
+                latest_scan, distance, cos, sin, collision, goal, a
+            )
+            
+            # 获取动作（使用探索噪声）
+            action = model.get_action(state, e_t, add_noise=True)
+            a_in = [(action[0] + 1) / 2, action[1]]
+            
+            # 执行动作
+            latest_scan, distance, cos, sin, collision, goal, a, reward = env.step(
+                lin_velocity=a_in[0], ang_velocity=a_in[1]
+            )
+            
+            # 计算cost
+            cost = compute_cost(latest_scan, collision, danger_threshold=0.5)
+            episode_cost += cost
+            
+            # 更新e_t（虽然不存储，但保持逻辑一致）
+            e_t = (e_t - cost) / gamma
+            steps += 1
+            
+            if terminal or steps >= max_steps:
+                break
+        
+        warmup_costs.append(episode_cost)
+        
+        # 进度显示
+        if episode_idx % 10 == 0 or episode_idx == episodes_per_epoch:
+            print(f"   Warm-up: {episode_idx}/{episodes_per_epoch}, episode_cost={episode_cost:.1f}")
+    
+    # 统计信息
+    avg_cost = np.mean(warmup_costs)
+    min_cost = np.min(warmup_costs)
+    max_cost = np.max(warmup_costs)
+    
+    # 计算var_u初始值 = α分位数（例如α=0.9时，取90%分位数）
+    initial_var_u = np.percentile(warmup_costs, CVAR_ALPHA * 100)
+    
+    print(f"\n   ✅ Warm-up Phase 完成")
+    print(f"   📊 Episode Cost统计:")
+    print(f"      Avg={avg_cost:.2f}, Min={min_cost:.2f}, Max={max_cost:.2f}")
+    print(f"   📊 VaR初始化:")
+    print(f"      α = {CVAR_ALPHA} (关注worst {(1-CVAR_ALPHA)*100:.0f}%)")
+    print(f"      var_u = {initial_var_u:.4f} ({CVAR_ALPHA*100:.0f}%分位数)")
+    print("=" * 80)
+    
+    return initial_var_u, warmup_costs
 
 
 def main(args=None):
@@ -120,7 +201,10 @@ def main(args=None):
     print("=" * 80)
     print(f"📁 运行ID: {run_id}")
     print(f"💾 保存路径: {save_directory}")
-    print(f"\n📋 训练流程（与baseline一致）:")
+    print(f"\n📋 训练流程:")
+    print(f"   1. Warm-up Phase: {cmd_args.episodes_per_epoch} episodes (不计入epoch)")
+    print(f"   2. Training Phase: {cmd_args.max_epochs} epochs × {cmd_args.episodes_per_epoch} episodes")
+    print(f"\n📋 每epoch训练细节（与baseline一致）:")
     print(f"   每 {cmd_args.train_every_n_episodes} episodes 训练一次")
     print(f"   每次训练 {cmd_args.train_iterations} iterations")
     print(f"   每iteration batch_size = {cmd_args.batch_size}")
@@ -153,7 +237,28 @@ def main(args=None):
         enable_random_obstacles=True
     )
     
-    # Replay Buffer
+    gamma = BASELINE_GAMMA
+    
+    # ===== Warm-up Phase =====
+    initial_var_u, warmup_costs = run_warmup_phase(
+        model=model,
+        env=ros,
+        episodes_per_epoch=cmd_args.episodes_per_epoch,
+        max_steps=cmd_args.max_steps,
+        gamma=gamma,
+    )
+    
+    # 设置var_u初始值
+    model.set_var_u(initial_var_u)
+    print(f"\n✅ var_u已初始化为: {model.var_u.item():.4f}")
+    
+    # TensorBoard记录warm-up统计
+    model.writer.add_scalar("warmup/avg_cost", np.mean(warmup_costs), 0)
+    model.writer.add_scalar("warmup/max_cost", np.max(warmup_costs), 0)
+    model.writer.add_scalar("warmup/min_cost", np.min(warmup_costs), 0)
+    model.writer.add_scalar("warmup/initial_var_u", initial_var_u, 0)
+    
+    # Replay Buffer（在warm-up之后创建，确保干净）
     replay_buffer = CVaRReplayBuffer(buffer_size=cmd_args.buffer_size, random_seed=42)
     
     # Best model追踪
@@ -165,9 +270,7 @@ def main(args=None):
     }
     epochs_since_improvement = 0
     
-    gamma = BASELINE_GAMMA
-    
-    # ===== 主训练循环 =====
+    # ===== Training Phase: 主训练循环 =====
     for epoch in range(cmd_args.max_epochs):
         print(f"\n{'='*80}")
         print(f"🎯 Epoch {epoch + 1}/{cmd_args.max_epochs}")
@@ -307,6 +410,7 @@ def main(args=None):
     
     print("\n" + "=" * 80)
     print("🎉 训练完成!")
+    print(f"   总计: Warm-up Phase + {cmd_args.max_epochs} Training Epochs")
     print(f"💾 模型保存在: {save_directory}")
     print("=" * 80)
 

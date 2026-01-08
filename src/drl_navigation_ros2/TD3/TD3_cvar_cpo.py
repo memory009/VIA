@@ -3,13 +3,13 @@ TD3 with CVaR-Constrained Policy Optimization
 
 用于Ablation Study：
 - 基础RL参数与baseline保持一致（γ=0.99, lr=1e-4, hidden_dim=26, batch_size=40）
-- CVaR特有参数按照论文设置（var_lr=0.001, lambda_lr=0.001, α=0.1, M=128）
+- CVaR特有参数按照论文设置（var_lr=0.001, lambda_lr=0.001, α=0.9, M=128）
 
 论文: "CVaR-Constrained Policy Optimization for Safe Reinforcement Learning"
 Zhang et al., IEEE TNNLS 2025
 
 核心公式:
-- 公式(5): VaR更新 u_{k+1} = u_k + β_u * [1 - 1/(1-α) * P(C >= u_k)]
+- 公式(5): VaR更新 u_{k+1} = u_k + β_u * [P(C >= u_k) - (1-α)]  (修正版)
 - 公式(19): CVaR估计 
 - 公式(20): Huber Quantile Regression Loss
 - 公式(23): Lagrangian更新 w_{k+1} = proj[w_k - β_w * (b - u_k - V_C(s_0))]
@@ -43,11 +43,11 @@ BASELINE_NOISE_CLIP = 0.5       # TD3噪声裁剪
 BASELINE_POLICY_FREQ = 2        # TD3策略更新频率
 
 # ----- CVaR-CPO特有参数（按照论文设置）-----
-CVAR_VAR_LR = 0.001             # β_u，VaR更新步长（论文推荐）
+CVAR_VAR_LR = 0.1             # β_u，VaR更新步长（论文推荐为0.001）
 CVAR_LAMBDA_LR = 0.001          # β_w，Lagrangian更新步长（论文推荐）
-CVAR_ALPHA = 0.9                # α，CVaR风险水平
+CVAR_ALPHA = 0.9                # α，CVaR风险水平（关注worst 10%）
 CVAR_N_QUANTILES = 128          # M，分位数数量（论文第838页）
-CVAR_COST_THRESHOLD = 25.0      # b，cost约束阈值（二值cost下：允许的雷达距离低于danger_threshold的次数上限）
+CVAR_COST_THRESHOLD = 10.0      # b，cost约束阈值（二值cost下：允许的雷达距离低于danger_threshold的次数上限）
 
 
 class Actor(nn.Module):
@@ -158,11 +158,13 @@ class CVaRCostCritic(nn.Module):
         
         return quantiles
     
-    def compute_cvar(self, quantiles, e_t, alpha=CVAR_ALPHA):
+    def compute_cvar(self, quantiles, e_t):
         """
         计算CVaR（论文公式19）
         
         V̂_C(s̄_t) = Σ (τ_{i+1} - τ_i) * q_i(s) * I(q_i(s) >= e_t)
+        
+        注意: 这里e_t是动态的累积cost阈值，不是固定的α-VaR
         """
         batch_size = quantiles.shape[0]
         
@@ -235,7 +237,7 @@ class TD3_CVaRCPO(object):
         self.var_lr = var_lr
         self.lambda_lr = lambda_lr
         
-        # VaR参数 u（论文: u⁰ = ?）论文未明确说明，初始化为0计算不了，故初始化为 10.0，预计靠近危险区域以及碰撞值最坏的10%会达到10.0
+        # VaR参数 u（将由warm-up phase初始化）
         self.var_u = torch.tensor([0.0], device=device)
         
         # Lagrangian乘子 w
@@ -249,7 +251,7 @@ class TD3_CVaRCPO(object):
         print(f"   ─── CVaR参数（按论文设置）───")
         print(f"   β_u (var_lr): {var_lr}")
         print(f"   β_w (lambda_lr): {lambda_lr}")
-        print(f"   α (CVaR level): {cvar_alpha}")
+        print(f"   α (CVaR level): {cvar_alpha} (关注worst {(1-cvar_alpha)*100:.0f}%)")
         print(f"   M (quantiles): {n_quantiles}")
         print(f"   b (cost threshold): {cost_threshold}")
         
@@ -284,6 +286,16 @@ class TD3_CVaRCPO(object):
         self.save_directory = save_directory
         
         print("="*80 + "\n")
+
+    def set_var_u(self, value):
+        """
+        设置VaR参数u的值（由warm-up phase调用）
+        
+        Args:
+            value: var_u的初始值（通常是warm-up阶段计算的α分位数）
+        """
+        self.var_u = torch.tensor([value], device=self.device)
+        print(f"📊 var_u已设置为: {value:.4f}")
 
     def augment_state(self, state, e_t):
         """状态扩展: s̄ = (s, e_t)"""
@@ -407,7 +419,7 @@ class TD3_CVaRCPO(object):
             
             # CVaR监控
             with torch.no_grad():
-                cost_cvar = self.cost_critic.compute_cvar(current_quantiles, e_t, self.cvar_alpha)
+                cost_cvar = self.cost_critic.compute_cvar(current_quantiles, e_t)
                 av_cost_cvar += cost_cvar.mean().item()
             
             # 更新Actor
@@ -416,7 +428,7 @@ class TD3_CVaRCPO(object):
                 Q_task, _ = self.task_critic(state, actor_action)
                 
                 cost_quantiles = self.cost_critic(state, actor_action)
-                cost_cvar = self.cost_critic.compute_cvar(cost_quantiles, e_t, self.cvar_alpha)
+                cost_cvar = self.cost_critic.compute_cvar(cost_quantiles, e_t)
                 
                 # Actor loss: -Q_task + w * CVaR_cost
                 actor_loss = -Q_task.mean() + self.lambda_w.item() * cost_cvar.mean()
@@ -484,43 +496,32 @@ class TD3_CVaRCPO(object):
     
     def update_var_and_lambda(self, avg_episode_cost, epoch_costs=None):
         """
-        更新VaR和Lagrangian（严格按照论文公式5和23）
+        更新VaR和Lagrangian（每个training epoch结束后调用）
         
-        公式(5): u^{k+1} = u^k + β_u * [1 - 1/(1-α) * P(C >= u^k)]
+        公式(5)修正版: u^{k+1} = u^k + β_u * [P(C >= u^k) - (1-α)]
         公式(23): w^{k+1} = proj[w^k - β_w * (b - u^k - V_C(s̄_0))]
         
-        修正: 第一个epoch用数据的90%分位数初始化u
+        注意: var_u的初始化由warm-up phase完成，这里只做更新
         """
         old_var_u = self.var_u.item()
         old_lambda_w = self.lambda_w.item()
         
+        # 公式(5)修正版: VaR更新
         if epoch_costs is not None and len(epoch_costs) > 0:
-            # 第一个epoch：用真实数据的(1-α)分位数初始化u
-            if old_var_u == 0.0:
-                initial_u = np.percentile(epoch_costs, self.cvar_alpha * 100)
-                self.var_u = torch.tensor([initial_u], device=self.device)
-                print(f"   📊 初始化VaR u = {initial_u:.4f} (α={self.cvar_alpha}, 关注worst {(1-self.cvar_alpha)*100:.0f}%)")
-
-                # 第一个epoch只初始化u，跳过公式5更新
-                prob_exceed = 1.0  # 用于打印
-                var_update = 0.0
-            else:
-                # 后续epoch：正常用公式5更新
-                prob_exceed = np.mean([c >= old_var_u for c in epoch_costs])
-                # var_update = 1.0 - (1.0 / (1.0 - self.cvar_alpha)) * prob_exceed
-                # 原论文公式5符号有误
-                var_update = prob_exceed - (1.0 - self.cvar_alpha)
-                new_var_u = old_var_u + self.var_lr * var_update
-                
-                # 只确保u非负（论文原文无clamp操作）
-                new_var_u = max(new_var_u, 0.0)
-                
-                self.var_u = torch.tensor([new_var_u], device=self.device)
+            prob_exceed = np.mean([c >= old_var_u for c in epoch_costs])
+            # 修正版公式: 当P(C>=u) > (1-α)时增大u，当P(C>=u) < (1-α)时减小u
+            var_update = prob_exceed - (1.0 - self.cvar_alpha)
+            new_var_u = old_var_u + self.var_lr * var_update
+            
+            # 确保u非负
+            new_var_u = max(new_var_u, 0.0)
+            
+            self.var_u = torch.tensor([new_var_u], device=self.device)
         else:
             prob_exceed = 0.0
             var_update = 0.0
         
-        # 公式(23): Lagrangian更新（每个epoch都执行）
+        # 公式(23): Lagrangian更新
         constraint_slack = self.cost_threshold - self.var_u.item() - avg_episode_cost
         new_lambda_w = old_lambda_w - self.lambda_lr * constraint_slack
         new_lambda_w = np.clip(new_lambda_w, 0.0, 100.0)
@@ -534,9 +535,9 @@ class TD3_CVaRCPO(object):
         self.writer.add_scalar("epoch/constraint_slack", constraint_slack, self.iter_count)
         
         # 打印调试信息
-        print(f"   📊 公式(5) VaR更新:")
-        print(f"      P(C >= u) = {prob_exceed:.3f}")
-        print(f"      update = 1 - {1/(1-self.cvar_alpha):.3f} × {prob_exceed:.3f} = {var_update:.4f}")
+        print(f"   📊 公式(5)修正版 VaR更新:")
+        print(f"      P(C >= u) = {prob_exceed:.3f}, target = {1-self.cvar_alpha:.3f}")
+        print(f"      update = {prob_exceed:.3f} - {1-self.cvar_alpha:.3f} = {var_update:.4f}")
         print(f"   📊 公式(23) Lagrangian更新:")
         print(f"      约束余量 = {self.cost_threshold} - {self.var_u.item():.2f} - {avg_episode_cost:.2f} = {constraint_slack:.2f}")
 
