@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """
-并行可达性验证脚本 - 支持多种TD3/TD7模型
+并行可达性验证脚本 - 支持多种TD3模型
 支持的模型类型:
 - TD3_Lightweight: 基础轻量级TD3模型
 - TD3_SafetyCritic: 安全批评家模型
 - TD3_SafetyCritic_Freeze: 支持冻结Task Critic的安全批评家模型
 - TD3_BFTQ: 支持budget参数的BFTQ模型
 - TD3_CVaRCPO: CVaR-CPO安全模型
-- TD7_Lightweight: 轻量级TD7模型（使用Encoder+Actor结构）
 
 与训练代码完全对齐
 """
@@ -40,7 +39,6 @@ from TD3.TD3_lightweight_safety_critic import TD3_SafetyCritic as TD3_SafetyCrit
 from TD3.TD3_lightweight_safety_critic_with_freeze import TD3_SafetyCritic as TD3_SafetyCritic_Freeze
 from TD3.TD3_lightweight_BFTQ import TD3_BFTQ
 from TD3.TD3_cvar_cpo import TD3_CVaRCPO
-from TD7.TD7_lightweight import TD7 as TD7_Lightweight
 
 def point_to_box_distance(point, box_center, box_size, box_yaw=0.0):
     """
@@ -172,177 +170,6 @@ def compute_robot_swept_area(pose, v_max, omega_max, dt, robot_radius=0.17, n_sa
         critical_points.append((edge_x, edge_y))
     
     return critical_points
-
-def compute_reachable_set_td7_polar(
-    encoder,
-    actor,
-    state,
-    observation_error=0.01,
-    bern_order=1,
-    error_steps=4000,
-    max_action=1.0,
-):
-    """
-    TD7专用的POLAR可达性验证
-
-    TD7的网络结构：
-    1. Encoder.zs(state) -> zs (状态编码)
-    2. Actor(state, zs) -> action
-
-    这里需要将Encoder和Actor组合成一个完整的计算图
-    """
-    import sympy as sym
-    from verification.taylor_model import (
-        TaylorModel,
-        TaylorArithmetic,
-        BernsteinPolynomial,
-        compute_tm_bounds,
-        apply_activation,
-    )
-
-    # 1. 提取Encoder权重 (state encoder部分: zs1, zs2, zs3)
-    encoder_weights = []
-    encoder_biases = []
-
-    with torch.no_grad():
-        # zs1, zs2, zs3 是state encoder的三层
-        encoder_weights.append(encoder.zs1.weight.cpu().numpy())
-        encoder_biases.append(encoder.zs1.bias.cpu().numpy())
-        encoder_weights.append(encoder.zs2.weight.cpu().numpy())
-        encoder_biases.append(encoder.zs2.bias.cpu().numpy())
-        encoder_weights.append(encoder.zs3.weight.cpu().numpy())
-        encoder_biases.append(encoder.zs3.bias.cpu().numpy())
-
-    # 2. 提取Actor权重 (l0, l1, l2, l3)
-    actor_weights = []
-    actor_biases = []
-
-    with torch.no_grad():
-        actor_weights.append(actor.l0.weight.cpu().numpy())
-        actor_biases.append(actor.l0.bias.cpu().numpy())
-        actor_weights.append(actor.l1.weight.cpu().numpy())
-        actor_biases.append(actor.l1.bias.cpu().numpy())
-        actor_weights.append(actor.l2.weight.cpu().numpy())
-        actor_biases.append(actor.l2.bias.cpu().numpy())
-        actor_weights.append(actor.l3.weight.cpu().numpy())
-        actor_biases.append(actor.l3.bias.cpu().numpy())
-
-    state_dim = len(state)
-    zs_dim = encoder_weights[2].shape[0]  # zs3的输出维度
-    hdim = actor_weights[0].shape[0]  # l0的输出维度
-
-    # 3. 创建符号变量
-    z_symbols = [sym.Symbol(f'z{i}') for i in range(state_dim)]
-
-    # 4. 构造输入Taylor模型
-    TM_state = []
-    for i in range(state_dim):
-        poly = sym.Poly(
-            observation_error * z_symbols[i] + state[i],
-            *z_symbols
-        )
-        TM_state.append(TaylorModel(poly, [0.0, 0.0]))
-
-    TA = TaylorArithmetic()
-    BP = BernsteinPolynomial(error_steps=error_steps)
-
-    # ==================== 第一部分: Encoder.zs(state) ====================
-    # zs1: Linear + ELU
-    TM_enc = TM_state
-    for layer_idx in range(3):  # zs1, zs2, zs3
-        W = encoder_weights[layer_idx]
-        b = encoder_biases[layer_idx]
-        TM_temp = []
-
-        for neuron_idx in range(len(b)):
-            tm_neuron = TA.weighted_sumforall(TM_enc, W[neuron_idx], b[neuron_idx])
-
-            if layer_idx < 2:  # zs1, zs2 使用 ELU
-                a, b_bound = compute_tm_bounds(tm_neuron)
-                if a >= 0:
-                    TM_after = tm_neuron
-                elif b_bound <= 0:
-                    # ELU(x) = exp(x) - 1 for x < 0
-                    # 简化处理：使用Bernstein逼近
-                    bern_poly = BP.approximate(a, b_bound, bern_order, 'elu')
-                    bern_error = BP.compute_error(a, b_bound, 'elu')
-                    TM_after = apply_activation(tm_neuron, bern_poly, bern_error, bern_order)
-                else:
-                    bern_poly = BP.approximate(a, b_bound, bern_order, 'elu')
-                    bern_error = BP.compute_error(a, b_bound, 'elu')
-                    TM_after = apply_activation(tm_neuron, bern_poly, bern_error, bern_order)
-            else:  # zs3 后面是 AvgL1Norm，这里先不处理归一化，保留线性输出
-                TM_after = tm_neuron
-
-            TM_temp.append(TM_after)
-        TM_enc = TM_temp
-
-    # TM_enc 现在是 zs (状态编码)，维度为 zs_dim
-    TM_zs = TM_enc
-
-    # ==================== 第二部分: Actor(state, zs) ====================
-    # Actor.l0(state) -> AvgL1Norm -> concat with zs
-    # l0: Linear (无激活，后接AvgL1Norm)
-    W_l0 = actor_weights[0]
-    b_l0 = actor_biases[0]
-    TM_l0_out = []
-    for neuron_idx in range(len(b_l0)):
-        tm_neuron = TA.weighted_sumforall(TM_state, W_l0[neuron_idx], b_l0[neuron_idx])
-        TM_l0_out.append(tm_neuron)
-
-    # concat [l0_out, zs] -> 维度: hdim + zs_dim
-    TM_concat = TM_l0_out + TM_zs
-
-    # l1, l2: Linear + ReLU
-    TM_actor = TM_concat
-    for layer_idx in range(1, 3):  # l1, l2
-        W = actor_weights[layer_idx]
-        b = actor_biases[layer_idx]
-        TM_temp = []
-
-        for neuron_idx in range(len(b)):
-            tm_neuron = TA.weighted_sumforall(TM_actor, W[neuron_idx], b[neuron_idx])
-
-            # ReLU
-            a, b_bound = compute_tm_bounds(tm_neuron)
-            if a >= 0:
-                TM_after = tm_neuron
-            elif b_bound <= 0:
-                zero_poly = sym.Poly(0, *z_symbols)
-                TM_after = TaylorModel(zero_poly, [0, 0])
-            else:
-                bern_poly = BP.approximate(a, b_bound, bern_order, 'relu')
-                bern_error = BP.compute_error(a, b_bound, 'relu')
-                TM_after = apply_activation(tm_neuron, bern_poly, bern_error, bern_order)
-
-            TM_temp.append(TM_after)
-        TM_actor = TM_temp
-
-    # l3: Linear + Tanh (输出层)
-    W_l3 = actor_weights[3]
-    b_l3 = actor_biases[3]
-    TM_output = []
-    for neuron_idx in range(len(b_l3)):
-        tm_neuron = TA.weighted_sumforall(TM_actor, W_l3[neuron_idx], b_l3[neuron_idx])
-
-        # Tanh
-        a, b_bound = compute_tm_bounds(tm_neuron)
-        bern_poly = BP.approximate(a, b_bound, bern_order, 'tanh')
-        bern_error = BP.compute_error(a, b_bound, 'tanh')
-        TM_after = apply_activation(tm_neuron, bern_poly, bern_error, bern_order)
-
-        # 缩放到动作空间
-        TM_after = TA.constant_product(TM_after, max_action)
-        TM_output.append(TM_after)
-
-    # 5. 计算动作可达集
-    action_ranges = []
-    for tm in TM_output:
-        a, b = compute_tm_bounds(tm)
-        action_ranges.append([a, b])
-
-    return action_ranges
-
 
 def compute_reachable_set_pure_polar(
     actor,
@@ -646,25 +473,12 @@ def verify_single_trajectory_worker(args):
             e_t = agent.var_u.item()
             print(f"[进程 {trajectory_idx+1}] 📊 从checkpoint自动读取 var_u 作为 e_t: {e_t:.4f}")
 
-    elif model_type == "TD7_Lightweight":
-        # 加载 TD7_Lightweight 模型
-        agent = TD7_Lightweight(
-            state_dim=25,
-            action_dim=2,
-            max_action=1.0,
-            device=device,
-            hidden_dim=26,
-            load_model=True,
-            model_name=model_name,
-            load_directory=model_path,
-        )
-
     else:
-        raise ValueError(f"未知的模型类型: {model_type}。请选择: TD3_Lightweight, TD3_SafetyCritic, TD3_SafetyCritic_Freeze, TD3_BFTQ, TD3_CVaRCPO, 或 TD7_Lightweight")
+        raise ValueError(f"未知的模型类型: {model_type}。请选择: TD3_Lightweight, TD3_SafetyCritic, TD3_SafetyCritic_Freeze, TD3_BFTQ, 或 TD3_CVaRCPO")
     
     # ===== 2. 加载对应场景的障碍物地图 =====
     # 构造障碍物地图文件路径（根据模型类型选择场景目录）
-    scenario_dir = "eval_scenarios_8_polar" if model_type in ["TD3_Lightweight", "TD3_SafetyCritic", "TD3_SafetyCritic_Freeze", "TD3_BFTQ", "TD3_CVaRCPO", "TD7_Lightweight"] else "eval_scenarios_12"
+    scenario_dir = "eval_scenarios_12" if model_type in ["TD3_Lightweight", "TD3_SafetyCritic", "TD3_SafetyCritic_Freeze", "TD3_BFTQ", "TD3_CVaRCPO"] else "eval_scenarios_12"
     obstacle_map_path = (
         project_root / "assets" / scenario_dir /
         f"obstacle_map_scenario_{trajectory_idx:02d}.json"
@@ -704,30 +518,17 @@ def verify_single_trajectory_worker(args):
             print(f"[进程 {trajectory_idx+1}] 进度: {i+1}/{n_samples} "
                   f"({i/n_samples*100:.0f}%) | 已用时: {elapsed/60:.1f}分钟")
         
-        # 计算可达集（根据模型类型选择不同的计算方法）
-        if model_type == "TD7_Lightweight":
-            # TD7使用Encoder+Actor的组合结构
-            action_ranges = compute_reachable_set_td7_polar(
-                agent.fixed_encoder,  # 使用fixed_encoder（与推理时一致）
-                agent.actor,
-                state,
-                observation_error=observation_error,
-                bern_order=1,
-                error_steps=4000,
-                max_action=1.0,
-            )
-        else:
-            # 其他TD3模型使用原有的计算方法
-            action_ranges = compute_reachable_set_pure_polar(
-                agent.actor,
-                state,
-                observation_error=observation_error,
-                bern_order=1,
-                error_steps=4000,
-                max_action=1.0,
-                budget=budget if model_type == "TD3_BFTQ" else None,
-                e_t=e_t if model_type == "TD3_CVaRCPO" else None,
-            )
+        # 计算可达集（对于BFTQ模型，传入budget参数；对于CVaRCPO模型，传入e_t参数）
+        action_ranges = compute_reachable_set_pure_polar(
+            agent.actor,
+            state,
+            observation_error=observation_error,
+            bern_order=1,
+            error_steps=4000,
+            max_action=1.0,
+            budget=budget if model_type == "TD3_BFTQ" else None,
+            e_t=e_t if model_type == "TD3_CVaRCPO" else None,
+        )
 
         is_safe = check_action_safety_geometric_complete(
             action_ranges, state, pose, obstacle_map
@@ -736,13 +537,10 @@ def verify_single_trajectory_worker(args):
         # 获取确定性动作（用于对比）
         # 对于BFTQ模型，需要传入budget参数
         # 对于CVaRCPO模型，需要传入e_t参数
-        # 对于TD7模型，使用select_action方法
         if model_type == "TD3_BFTQ":
             det_action = agent.get_action(state, budget, add_noise=False)
         elif model_type == "TD3_CVaRCPO":
             det_action = agent.get_action(state, e_t, add_noise=False)
-        elif model_type == "TD7_Lightweight":
-            det_action = agent.select_action(np.array(state), use_checkpoint=False, use_exploration=False)
         else:
             det_action = agent.get_action(state, add_noise=False)
         
@@ -849,7 +647,7 @@ def main():
         '--model-type',
         type=str,
         default='TD3_BFTQ',
-        choices=['TD3_BFTQ', 'TD3_SafetyCritic_Freeze', 'TD3_SafetyCritic', 'TD3_Lightweight', 'TD3_CVaRCPO', 'TD7_Lightweight'],
+        choices=['TD3_BFTQ', 'TD3_SafetyCritic_Freeze', 'TD3_SafetyCritic', 'TD3_Lightweight', 'TD3_CVaRCPO'],
         help='模型类型 (默认: TD3_BFTQ)'
     )
     parser.add_argument(
@@ -902,8 +700,8 @@ def main():
         trajectory_path = project_root / "assets" / f"trajectories_lightweight_8_polar_freeze_{safety_critic_epoch}_{trajectory_version}.pkl"
     elif model_type == "TD3_Lightweight":
         model_name = "TD3_lightweight_best"
-        model_path = project_root / "models" / "TD3_lightweight" / "Nov20_16-39-56_cheeson"
-        trajectory_path = project_root / "assets" / f"trajectories_lightweight_8_polar_Nov20_td3_lightweight_{trajectory_version}.pkl"
+        model_path = project_root / "models" / "TD3_lightweight" / "Nov24_22-43-08_cheeson"
+        trajectory_path = project_root / "assets" / f"trajectories_lightweight_8_polar_{trajectory_version}.pkl"
     elif model_type == "TD3_BFTQ":
         model_name = "checkpoint_epoch_058"
         model_path = project_root / "models" / "TD3_BFTQ_8obs" / "Dec29_18-02-40_cheeson_bftq"
@@ -913,18 +711,9 @@ def main():
     elif model_type == "TD3_CVaRCPO":
         # model_name = "TD3_cvar_cpo_epoch_059"
         model_name = "TD3_cvar_cpo_best"
-        # model_path = project_root / "models" / "TD3_cvar_cpo" / "Jan08_21-25-09_cheeson_cvar_cpo_ablation"
-        # model_path = project_root / "models" / "TD3_cvar_cpo" / "Jan06_16-43-33_cheeson_cvar_cpo_ablation"
-        model_path = project_root / "models" / "TD3_cvar_cpo" / "jan19_19-23-47_cheeson_cvar_cpo_ablation" #wc0.5
-        # model_path = project_root / "models" / "TD3_cvar_cpo" / "jan20_23-09-40_cheeson_cvar_cpo_ablation" #wc0.9
+        model_path = project_root / "models" / "TD3_cvar_cpo" / "Jan08_21-25-09_cheeson_cvar_cpo_ablation"
         # 对于CVaRCPO模型，轨迹文件名为 trajectories_lightweight_8_polar_td3_cvarcpo_vX.pkl
-        trajectory_path = project_root / "assets" / f"trajectories_lightweight_8_polar_wc0.5_td3_cvarcpo_{trajectory_version}.pkl" #wc0.5
-        # trajectory_path = project_root / "assets" / f"trajectories_lightweight_8_polar_wc0.9_td3_cvarcpo_{trajectory_version}.pkl" #wc0.9
-    elif model_type == "TD7_Lightweight":
-        model_name = "TD7_lightweight_best"
-        model_path = project_root / "models" / "TD7_lightweight" / "Jan14_14-26-38_cheeson"
-        # 对于TD7模型，轨迹文件名为 trajectories_lightweight_8_polar_td7_vX.pkl
-        trajectory_path = project_root / "assets" / f"trajectories_lightweight_8_polar_td7_{trajectory_version}.pkl"
+        trajectory_path = project_root / "assets" / f"trajectories_lightweight_12_polar_td3_cvarcpo_12_{trajectory_version}.pkl"
     else:
         raise ValueError(f"未知的模型类型: {model_type}")
     # ==============================
@@ -1058,8 +847,7 @@ def main():
         actual_e_t = all_results[0].get('e_t_used', 0.0)
         # 使用4位小数精度显示e_t值
         e_t_str = f"{actual_e_t:.4f}".replace('.', 'p')
-        output_filename = f"reachability_results_pure_polar_wc0.5_td3_cvar_cpo_varu{e_t_str}_{trajectory_version}.json" #wc0.5
-        # output_filename = f"reachability_results_pure_polar_wc0.9_td3_cvar_cpo_varu{e_t_str}_{trajectory_version}.json" #wc0.9
+        output_filename = f"reachability_results_pure_polar_td3_cvar_cpo_12_varu{e_t_str}_{trajectory_version}.json"
         print(f"\n📊 实际使用的 var_u 值: {actual_e_t:.4f}")
     elif model_type in ["TD3_SafetyCritic", "TD3_SafetyCritic_Freeze"]:
         output_filename = f"reachability_results_pure_polar_lightweight_8_freeze_{safety_critic_epoch}_{trajectory_version}.json"
