@@ -46,6 +46,8 @@ BASELINE_POLICY_FREQ = 2        # TD3策略更新频率
 CVAR_VAR_LR = 0.1             # β_u，VaR更新步长（论文推荐为0.001）
 CVAR_LAMBDA_LR = 0.001          # β_w，Lagrangian更新步长（论文推荐）
 CVAR_ALPHA = 0.9                # α，CVaR风险水平（关注worst 10%）
+# CVAR_ALPHA = 0.5                # α，CVaR风险水平（关注worst 50%）
+# CVAR_ALPHA = 0.1                # α，CVaR风险水平（关注worst 90%）
 CVAR_N_QUANTILES = 128          # M，分位数数量（论文第838页）
 CVAR_COST_THRESHOLD = 10.0      # b，cost约束阈值（二值cost下：允许的雷达距离低于danger_threshold的次数上限）
 

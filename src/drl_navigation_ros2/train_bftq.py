@@ -77,6 +77,12 @@ def main(args=None):
         default=1.0,
         help='Maximum budget value (default: 1.0)'
     )
+    parser.add_argument(
+        '--lambda-cost',
+        type=float,
+        default=1.0,
+        help='Lagrangian cost penalty coefficient (default: 1.0)'
+    )
     cmd_args = parser.parse_args(args)
 
     # 生成带时间戳的运行标识
@@ -124,6 +130,7 @@ def main(args=None):
     print(f"📊 TensorBoard日志: runs/{run_id}")
     print(f"🎯 训练设置: {max_epochs} epochs × {episodes_per_epoch} episodes")
     print(f"💰 Budget范围: {budget_range}")
+    print(f"⚖️  拉格朗日系数: {cmd_args.lambda_cost}")
     print(f"💾 Checkpoint保存频率: 每{save_every_n_epochs}个epoch")
     print("=" * 80)
 
@@ -133,6 +140,7 @@ def main(args=None):
         max_action=max_action,
         device=device,
         budget_range=budget_range,
+        lambda_cost=cmd_args.lambda_cost,
         save_every=100,
         load_model=False,
         save_directory=save_directory,

@@ -168,6 +168,7 @@ class TD3_BFTQ(object):
         lr=1e-4,
         hidden_dim=26,
         budget_range=(0.0, 1.0),  # Budget范围
+        lambda_cost=1.0,  # 新增: 拉格朗日cost惩罚系数
         save_every=0,
         load_model=False,
         save_directory=Path("src/drl_navigation_ros2/models/TD3_BFTQ"),
@@ -184,6 +185,7 @@ class TD3_BFTQ(object):
         self.max_action = max_action
         self.state_dim = state_dim
         self.budget_range = budget_range
+        self.lambda_cost = lambda_cost  # 拉格朗日乘子
 
         # Initialize the Actor network (budget-aware)
         self.actor = Actor(state_dim, action_dim, hidden_dim).to(self.device)
@@ -206,6 +208,7 @@ class TD3_BFTQ(object):
         print(f"📍 设备: {device}")
         print(f"🎯 隐藏层维度: {hidden_dim}")
         print(f"💰 Budget范围: {budget_range}")
+        print(f"⚖️  拉格朗日系数 λ_cost: {lambda_cost}")
         print("="*80 + "\n")
 
         # TensorBoard
@@ -292,6 +295,9 @@ class TD3_BFTQ(object):
         max_Qr = -inf
         av_loss_r = 0
         av_loss_c = 0
+        av_actor_loss = 0
+        av_cost_violation = 0
+        actor_updates = 0
 
         for it in range(iterations):
             # Sample a batch from the replay buffer
@@ -365,14 +371,24 @@ class TD3_BFTQ(object):
             # ========== Actor Update (Delayed) ==========
             if it % policy_freq == 0:
                 # Actor目标: 最大化Q_reward，同时满足Q_cost ≤ budget
-                # 简化实现: 只最大化Q_reward (完整实现需要convex hull)
+                # 使用拉格朗日方法实现约束优化
                 actor_action = self.actor(state, budget)
                 Q1r, Q2r = self.critic.Q_reward(state, actor_action, budget)
-                actor_loss = -Q1r.mean()  # 最大化Q_reward
+                Q1c, Q2c = self.critic.Q_cost(state, actor_action, budget)
+
+                # 拉格朗日约束: L = -Q_reward + λ * max(0, Q_cost - budget)
+                # 只惩罚违反约束的部分 (Q_cost > budget)
+                cost_violation = torch.clamp(Q1c - budget, min=0.0)
+                actor_loss = -Q1r.mean() + self.lambda_cost * cost_violation.mean()
 
                 self.actor_optimizer.zero_grad()
                 actor_loss.backward()
                 self.actor_optimizer.step()
+
+                # 记录统计信息
+                av_actor_loss += actor_loss
+                av_cost_violation += cost_violation.mean()
+                actor_updates += 1
 
                 # Soft update target networks
                 for param, target_param in zip(
@@ -396,6 +412,12 @@ class TD3_BFTQ(object):
         self.writer.add_scalar("train/avg_Qr", av_Qr / iterations, self.iter_count)
         self.writer.add_scalar("train/avg_Qc", av_Qc / iterations, self.iter_count)
         self.writer.add_scalar("train/max_Qr", max_Qr, self.iter_count)
+
+        # 新增: Actor相关指标
+        if actor_updates > 0:
+            self.writer.add_scalar("train/actor_loss", av_actor_loss / actor_updates, self.iter_count)
+            self.writer.add_scalar("train/cost_violation", av_cost_violation / actor_updates, self.iter_count)
+            self.writer.add_scalar("train/lambda_cost", self.lambda_cost, self.iter_count)
 
         if self.save_every > 0 and self.iter_count % self.save_every == 0:
             self.save(filename=self.model_name, directory=self.save_directory)

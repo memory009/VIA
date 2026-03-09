@@ -266,6 +266,7 @@ def main(args=None):
         'success_rate': -1.0,
         'collision_rate': 2.0,
         'avg_reward': -float('inf'),
+        'avg_cost': float('inf'),  # 初始化为正无穷，越小越好
         'epoch': 0
     }
     epochs_since_improvement = 0
@@ -405,7 +406,8 @@ def main(args=None):
         print(f"🏆 Current best from epoch {best_metrics['epoch']}: "
               f"Success={best_metrics['success_rate']:.3f}, "
               f"Collision={best_metrics['collision_rate']:.3f}, "
-              f"Reward={best_metrics['avg_reward']:.2f}")
+              f"Reward={best_metrics['avg_reward']:.2f}, "
+              f"Cost={best_metrics['avg_cost']:.2f}")
         print("=" * 80)
     
     print("\n" + "=" * 80)
@@ -470,8 +472,9 @@ def evaluate(model, env, scenarios, epoch, max_steps, best_metrics,
     print(f"   Average Cost:    {avg_cost:.2f}")
     
     is_best = is_better_model(
-        avg_goal, avg_col, avg_reward,
-        best_metrics['success_rate'], best_metrics['collision_rate'], best_metrics['avg_reward']
+        avg_goal, avg_col, avg_reward, avg_cost,
+        best_metrics['success_rate'], best_metrics['collision_rate'],
+        best_metrics['avg_reward'], best_metrics['avg_cost']
     )
     
     if is_best:
@@ -495,19 +498,34 @@ def evaluate(model, env, scenarios, epoch, max_steps, best_metrics,
     }
 
 
-def is_better_model(curr_success, curr_collision, curr_reward,
-                    best_success, best_collision, best_reward):
-    """多级判断标准（与baseline一致）"""
+def is_better_model(curr_success, curr_collision, curr_reward, curr_cost,
+                    best_success, best_collision, best_reward, best_cost):
+    """
+    多级判断标准：
+    1. 优先比较成功率（越高越好）
+    2. 成功率相同时，比较avg_cost（越小越好）
+    3. avg_cost相同时，比较碰撞率（越低越好）
+    4. 碰撞率相同时，比较奖励（越高越好）
+    """
+    # 第一优先级：成功率
     if curr_success > best_success:
         return True
     elif curr_success < best_success:
         return False
-    
+
+    # 第二优先级：avg_cost（越小越好）
+    if curr_cost < best_cost:
+        return True
+    elif curr_cost > best_cost:
+        return False
+
+    # 第三优先级：碰撞率
     if curr_collision < best_collision:
         return True
     elif curr_collision > best_collision:
         return False
-    
+
+    # 第四优先级：奖励
     return curr_reward > best_reward
 
 
