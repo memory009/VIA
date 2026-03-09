@@ -157,3 +157,6 @@ visualizations/
 
 # Top-level models directory (temporary, consolidated into src/drl_navigation_ros2/models/)
 /models/
+
+# Trained model weights
+src/drl_navigation_ros2/models/

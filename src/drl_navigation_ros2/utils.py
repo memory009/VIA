@@ -81,7 +81,6 @@ def record_eval_positions(
         eval_scenario = []
         element_positions = [[-2.93, 3.17], [2.86, -3.0], [-2.77, -0.96], [2.83, 2.93]]
         
-        # 可选：添加指定数量的随机障碍物
         if enable_random_obstacles:
             total_random = max(0, n_random_obstacles)
             for i in range(4, 4 + total_random):
@@ -112,7 +111,6 @@ def record_eval_positions(
         }
         
         for idx, scenario in enumerate(scenarios):
-            # 机器人和目标的索引取决于是否启用随机障碍物
             robot_idx = n_random_obstacles if enable_random_obstacles else 0
             target_idx = robot_idx + 1
             

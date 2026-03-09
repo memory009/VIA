@@ -71,7 +71,7 @@ class TD3(object):
         save_directory=Path("src/drl_navigation_ros2/models/TD3"),
         model_name="TD3",
         load_directory=Path("src/drl_navigation_ros2/models/TD3"),
-        run_id=None,  # 新增：运行ID用于TensorBoard日志
+        run_id=None,
     ):
         # Initialize the Actor network
         self.device = device
@@ -90,12 +90,10 @@ class TD3(object):
         self.max_action = max_action
         self.state_dim = state_dim
         
-        # 使用run_id创建TensorBoard日志目录（与模型保存目录对应）
         if run_id:
-            tensorboard_log_dir = f"runs/{run_id}"
-            self.writer = SummaryWriter(log_dir=tensorboard_log_dir)
+            self.writer = SummaryWriter(log_dir=f"runs/{run_id}")
         else:
-            self.writer = SummaryWriter()  # 使用默认目录
+            self.writer = SummaryWriter()
         
         self.iter_count = 0
         if load_model:
@@ -231,7 +229,6 @@ class TD3(object):
         )
 
     def load(self, filename, directory):
-        # ✅ 修改为：
         self.actor.load_state_dict(
             torch.load("%s/%s_actor.pth" % (directory, filename), map_location=self.device)
         )
