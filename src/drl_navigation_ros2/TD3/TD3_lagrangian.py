@@ -163,7 +163,7 @@ class SafetyCritic(nn.Module):
         return q
 
 
-class TD3Lagrangian(object):
+class TD3_Lagrangian(object):
     """
     TD3 with Lagrangian Safety Constraint
     

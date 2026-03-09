@@ -6,8 +6,11 @@
 - TD3_SafetyCritic: 安全批评家模型
 - TD3_SafetyCritic_Freeze: 支持冻结Task Critic的安全批评家模型
 - TD3_BFTQ: 支持budget参数的BFTQ模型
-- TD3_CVaRCPO: CVaR-CPO安全模型
+- TD3_CVaRCPO: CVaR-CPO安全模型（需要e_t参数，自动从checkpoint读取）
 - TD7_Lightweight: 轻量级TD7模型（使用Encoder+Actor结构）
+- TD3_WCSAC: WCSAC安全模型（Actor输入维度与baseline相同，不需要额外参数）
+- TD3_RCPO_Strict: RCPO安全模型（Actor输入维度与baseline相同，不需要额外参数）
+- TD3_Lagrangian: Lagrangian安全模型（Actor输入维度与baseline相同，不需要额外参数）
 
 与训练代码完全对齐
 """
@@ -40,6 +43,9 @@ from TD3.TD3_lightweight_safety_critic import TD3_SafetyCritic as TD3_SafetyCrit
 from TD3.TD3_lightweight_safety_critic_with_freeze import TD3_SafetyCritic as TD3_SafetyCritic_Freeze
 from TD3.TD3_lightweight_BFTQ import TD3_BFTQ
 from TD3.TD3_cvar_cpo import TD3_CVaRCPO
+from TD3.TD3_wcsac import TD3_WCSAC
+from TD3.TD3_rcpo_strict import TD3_RCPO_Strict
+from TD3.TD3_lagrangian import TD3_Lagrangian
 from TD7.TD7_lightweight import TD7 as TD7_Lightweight
 
 def point_to_box_distance(point, box_center, box_size, box_yaw=0.0):
@@ -659,12 +665,63 @@ def verify_single_trajectory_worker(args):
             load_directory=model_path,
         )
 
+    elif model_type == "TD3_WCSAC":
+        # 加载 TD3_WCSAC 模型
+        # 注意：TD3_WCSAC的Actor输入维度是state_dim=25，不需要额外参数
+        # β（soft_beta）只在训练时用于Actor loss计算，不是Actor网络的输入
+        agent = TD3_WCSAC(
+            state_dim=25,
+            action_dim=2,
+            max_action=1.0,
+            device=device,
+            hidden_dim=26,
+            load_model=False,
+            save_directory=model_path,
+            model_name=model_name,
+            run_id="polar_verification_wcsac",
+        )
+        agent.load(filename=model_name, directory=str(model_path))
+
+    elif model_type == "TD3_RCPO_Strict":
+        # 加载 TD3_RCPO_Strict 模型
+        # 注意：TD3_RCPO_Strict的Actor输入维度是state_dim=25，不需要额外参数
+        # λ（lambda_penalty）只在训练时用于计算penalized reward，不是Actor网络的输入
+        agent = TD3_RCPO_Strict(
+            state_dim=25,
+            action_dim=2,
+            max_action=1.0,
+            device=device,
+            hidden_dim=26,
+            load_model=False,
+            save_directory=model_path,
+            model_name=model_name,
+            run_id="polar_verification_rcpo_strict",
+        )
+        agent.load(filename=model_name, directory=str(model_path))
+
+    elif model_type == "TD3_Lagrangian":
+        # 加载 TD3_Lagrangian 模型
+        # 注意：TD3_Lagrangian的Actor输入维度是state_dim=25，不需要额外参数
+        # κ（kappa）只在训练时用于Actor loss计算，不是Actor网络的输入
+        agent = TD3_Lagrangian(
+            state_dim=25,
+            action_dim=2,
+            max_action=1.0,
+            device=device,
+            hidden_dim=26,
+            load_model=False,
+            save_directory=model_path,
+            model_name=model_name,
+            run_id="polar_verification_lagrangian",
+        )
+        agent.load(filename=model_name, directory=str(model_path))
+
     else:
-        raise ValueError(f"未知的模型类型: {model_type}。请选择: TD3_Lightweight, TD3_SafetyCritic, TD3_SafetyCritic_Freeze, TD3_BFTQ, TD3_CVaRCPO, 或 TD7_Lightweight")
+        raise ValueError(f"未知的模型类型: {model_type}。请选择: TD3_Lightweight, TD3_SafetyCritic, TD3_SafetyCritic_Freeze, TD3_BFTQ, TD3_CVaRCPO, TD7_Lightweight, TD3_WCSAC, TD3_RCPO_Strict, 或 TD3_Lagrangian")
     
     # ===== 2. 加载对应场景的障碍物地图 =====
     # 构造障碍物地图文件路径（根据模型类型选择场景目录）
-    scenario_dir = "eval_scenarios_8_polar" if model_type in ["TD3_Lightweight", "TD3_SafetyCritic", "TD3_SafetyCritic_Freeze", "TD3_BFTQ", "TD3_CVaRCPO", "TD7_Lightweight"] else "eval_scenarios_12"
+    scenario_dir = "eval_scenarios_8_polar" if model_type in ["TD3_Lightweight", "TD3_SafetyCritic", "TD3_SafetyCritic_Freeze", "TD3_BFTQ", "TD3_CVaRCPO", "TD7_Lightweight", "TD3_WCSAC", "TD3_RCPO_Strict", "TD3_Lagrangian"] else "eval_scenarios_12"
     obstacle_map_path = (
         project_root / "assets" / scenario_dir /
         f"obstacle_map_scenario_{trajectory_idx:02d}.json"
@@ -849,7 +906,7 @@ def main():
         '--model-type',
         type=str,
         default='TD3_BFTQ',
-        choices=['TD3_BFTQ', 'TD3_SafetyCritic_Freeze', 'TD3_SafetyCritic', 'TD3_Lightweight', 'TD3_CVaRCPO', 'TD7_Lightweight'],
+        choices=['TD3_BFTQ', 'TD3_SafetyCritic_Freeze', 'TD3_SafetyCritic', 'TD3_Lightweight', 'TD3_CVaRCPO', 'TD7_Lightweight', 'TD3_WCSAC', 'TD3_RCPO_Strict', 'TD3_Lagrangian'],
         help='模型类型 (默认: TD3_BFTQ)'
     )
     parser.add_argument(
@@ -915,16 +972,33 @@ def main():
         model_name = "TD3_cvar_cpo_best"
         # model_path = project_root / "models" / "TD3_cvar_cpo" / "Jan08_21-25-09_cheeson_cvar_cpo_ablation"
         # model_path = project_root / "models" / "TD3_cvar_cpo" / "Jan06_16-43-33_cheeson_cvar_cpo_ablation"
-        model_path = project_root / "models" / "TD3_cvar_cpo" / "jan19_19-23-47_cheeson_cvar_cpo_ablation" #wc0.5
-        # model_path = project_root / "models" / "TD3_cvar_cpo" / "jan20_23-09-40_cheeson_cvar_cpo_ablation" #wc0.9
+        # model_path = project_root / "models" / "TD3_cvar_cpo" / "Jan19_19-23-47_cheeson_cvar_cpo_ablation" #wc0.5
+        # model_path = project_root / "models" / "TD3_cvar_cpo" / "Jan20_23-09-40_cheeson_cvar_cpo_ablation" #wc0.9
+        model_path = project_root / "models" / "TD3_cvar_cpo" / "Jan25_14-26-21_cheeson_cvar_cpo_ablation" #wc0.5 v2
         # 对于CVaRCPO模型，轨迹文件名为 trajectories_lightweight_8_polar_td3_cvarcpo_vX.pkl
-        trajectory_path = project_root / "assets" / f"trajectories_lightweight_8_polar_wc0.5_td3_cvarcpo_{trajectory_version}.pkl" #wc0.5
-        # trajectory_path = project_root / "assets" / f"trajectories_lightweight_8_polar_wc0.9_td3_cvarcpo_{trajectory_version}.pkl" #wc0.9
+        # trajectory_path = project_root / "assets" / "Traj_Jan19_td3_lightweight_cvar_cpo_wc0.5" /f"trajectories_lightweight_8_polar_wc0.5_td3_cvarcpo_{trajectory_version}.pkl" #wc0.5
+        # trajectory_path = project_root / "assets" / "Traj_Jan20_td3_lightweight_cvar_cpo_wc0.9" / f"trajectories_lightweight_8_polar_wc0.9_td3_cvarcpo_{trajectory_version}.pkl" #wc0.9
+        trajectory_path = project_root / "assets" / f"trajectories_lightweight_8_polar_wc0.5_v2_td3_cvarcpo_{trajectory_version}.pkl" #wc0.5 v2
     elif model_type == "TD7_Lightweight":
         model_name = "TD7_lightweight_best"
         model_path = project_root / "models" / "TD7_lightweight" / "Jan14_14-26-38_cheeson"
         # 对于TD7模型，轨迹文件名为 trajectories_lightweight_8_polar_td7_vX.pkl
         trajectory_path = project_root / "assets" / f"trajectories_lightweight_8_polar_td7_{trajectory_version}.pkl"
+    elif model_type == "TD3_WCSAC":
+        model_name = "TD3_wcsac_best"
+        model_path = project_root / "models" / "TD3_wcsac" / "Jan23_17-04-44_cheeson_td3_wcsac_ablation"
+        # 对于WCSAC模型，轨迹文件名为 trajectories_lightweight_8_polar_td3_wcsac_vX.pkl
+        trajectory_path = project_root / "assets" / f"trajectories_lightweight_8_polar_td3_wcsac_{trajectory_version}.pkl"
+    elif model_type == "TD3_RCPO_Strict":
+        model_name = "TD3_rcpo_strict_best"
+        model_path = project_root / "models" / "TD3_rcpo_strict" / "Jan29_14-23-54_cheeson_rcpo_strict"
+        # 对于RCPO_Strict模型，轨迹文件名为 trajectories_lightweight_8_polar_td3_rcpo_strict_vX.pkl
+        trajectory_path = project_root / "assets" / f"trajectories_lightweight_8_polar_td3_rcpo_strict_{trajectory_version}.pkl"
+    elif model_type == "TD3_Lagrangian":
+        model_name = "TD3_lagrangian_best"
+        model_path = project_root / "models" / "TD3_lagrangian" / "Jan31_00-33-06_cheeson_td3_lagrangian_ablation"
+        # 对于Lagrangian模型，轨迹文件名为 trajectories_lightweight_8_polar_td3_lagrangian_vX.pkl
+        trajectory_path = project_root / "assets" / f"trajectories_lightweight_8_polar_td3_lagrangian_{trajectory_version}.pkl"
     else:
         raise ValueError(f"未知的模型类型: {model_type}")
     # ==============================
@@ -1058,8 +1132,8 @@ def main():
         actual_e_t = all_results[0].get('e_t_used', 0.0)
         # 使用4位小数精度显示e_t值
         e_t_str = f"{actual_e_t:.4f}".replace('.', 'p')
-        output_filename = f"reachability_results_pure_polar_wc0.5_td3_cvar_cpo_varu{e_t_str}_{trajectory_version}.json" #wc0.5
-        # output_filename = f"reachability_results_pure_polar_wc0.9_td3_cvar_cpo_varu{e_t_str}_{trajectory_version}.json" #wc0.9
+        # output_filename = f"reachability_results_pure_polar_wc0.5_td3_cvar_cpo_varu{e_t_str}_{trajectory_version}.json" #wc0.5
+        output_filename = f"reachability_results_pure_polar_wc0.9_td3_cvar_cpo_varu{e_t_str}_{trajectory_version}.json" #wc0.9
         print(f"\n📊 实际使用的 var_u 值: {actual_e_t:.4f}")
     elif model_type in ["TD3_SafetyCritic", "TD3_SafetyCritic_Freeze"]:
         output_filename = f"reachability_results_pure_polar_lightweight_8_freeze_{safety_critic_epoch}_{trajectory_version}.json"

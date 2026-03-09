@@ -247,6 +247,9 @@ class BernsteinPolynomial:
                 f_value = np.cos(float(point))
             elif activation_name == 'sin':
                 f_value = np.sin(float(point))
+            elif activation_name == 'elu':
+                # ELU(x) = x if x > 0, else exp(x) - 1
+                f_value = float(point) if point > 0 else np.exp(float(point)) - 1
             else:
                 raise ValueError(f"不支持的激活函数: {activation_name}")
             
@@ -304,7 +307,10 @@ class BernsteinPolynomial:
                 f_value = np.cos(float(point))
             elif activation_name == 'sin':
                 f_value = np.sin(float(point))
-            
+            elif activation_name == 'elu':
+                # ELU(x) = x if x > 0, else exp(x) - 1
+                f_value = float(point) if point > 0 else np.exp(float(point)) - 1
+
             # Bernstein 多项式值
             b_value = self._poly_func(point)
             

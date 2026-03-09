@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 分析可达集安全验证结果
-读取 JSON 并生成详细报告
+读取多个 JSON 文件并生成统计报告（均值±标准差）
 """
 
 import json
@@ -16,11 +16,251 @@ def format_seconds(seconds: float) -> str:
     hours = seconds / 3600
     return f"{minutes:.1f} 分钟 ({hours:.2f} 小时)"
 
+
+def extract_single_run_metrics(json_path):
+    """从单个JSON文件中提取关键指标"""
+    with open(json_path, 'r') as f:
+        data = json.load(f)
+
+    trajectories = data['trajectories']
+
+    # 提取所有轨迹的基础信息
+    goal_trajectories = [t for t in trajectories if t['goal_reached']]
+    collision_trajectories = [t for t in trajectories if t['collision']]
+
+    # 计算指标
+    n_total = len(trajectories)
+    n_goal = len(goal_trajectories)
+    n_collision = len(collision_trajectories)
+
+    success_rate = n_goal / n_total if n_total > 0 else 0
+    collision_rate = n_collision / n_total if n_total > 0 else 0
+
+    # 计算平均步数（只计算成功的轨迹）
+    if goal_trajectories:
+        avg_steps_success = np.mean([t['steps'] for t in goal_trajectories])
+    else:
+        avg_steps_success = 0
+
+    # 计算安全率
+    if goal_trajectories:
+        safety_rate_success = np.mean([t['safety_rate'] for t in goal_trajectories])
+    else:
+        safety_rate_success = 0
+
+    if collision_trajectories:
+        safety_rate_collision = np.mean([t['safety_rate'] for t in collision_trajectories])
+    else:
+        safety_rate_collision = 0
+
+    # 整体安全率
+    overall_safety_rate = data['summary']['overall_safety_rate']
+
+    # 计算排除超时轨迹的整体安全率（只考虑成功+碰撞）
+    completed_trajectories = [t for t in trajectories if t['goal_reached'] or t['collision']]
+    if completed_trajectories:
+        completed_samples = sum(t['n_samples'] for t in completed_trajectories)
+        completed_safe = sum(t['safe_count'] for t in completed_trajectories)
+        completed_safety_rate = completed_safe / completed_samples if completed_samples > 0 else 0
+    else:
+        completed_safety_rate = 0
+
+    # 提取可达集宽度信息，转换为实际物理单位
+    # 线速度：网络输出 [-1,1] → a_in = (action+1)/2，因此 width_v(m/s) = width_v_raw / 2
+    # 角速度：网络输出 [-1,1] 直接作为 rad/s，无缩放
+    all_widths_v = []
+    all_widths_omega = []
+    for traj in trajectories:
+        if 'results' in traj:
+            for result in traj['results']:
+                if 'width_v' in result:
+                    all_widths_v.append(result['width_v'] / 2)  # 转换为 m/s
+                if 'width_omega' in result:
+                    all_widths_omega.append(result['width_omega'])  # 已是 rad/s
+
+    # 计算宽度统计量
+    if all_widths_v:
+        avg_width_v = np.mean(all_widths_v)
+        std_width_v = np.std(all_widths_v)
+        median_width_v = np.median(all_widths_v)
+        min_width_v = np.min(all_widths_v)
+    else:
+        avg_width_v = std_width_v = median_width_v = min_width_v = 0
+
+    if all_widths_omega:
+        avg_width_omega = np.mean(all_widths_omega)
+        std_width_omega = np.std(all_widths_omega)
+        median_width_omega = np.median(all_widths_omega)
+        min_width_omega = np.min(all_widths_omega)
+    else:
+        avg_width_omega = std_width_omega = median_width_omega = min_width_omega = 0
+
+    return {
+        'n_total': n_total,
+        'n_goal': n_goal,
+        'n_collision': n_collision,
+        'success_rate': success_rate,
+        'collision_rate': collision_rate,
+        'avg_steps_success': avg_steps_success,
+        'safety_rate_success': safety_rate_success,
+        'safety_rate_collision': safety_rate_collision,
+        'overall_safety_rate': overall_safety_rate,
+        'completed_safety_rate': completed_safety_rate,  # 排除超时轨迹的安全率
+        # 可达集宽度
+        'avg_width_v': avg_width_v,
+        'std_width_v': std_width_v,
+        'median_width_v': median_width_v,
+        'min_width_v': min_width_v,
+        'avg_width_omega': avg_width_omega,
+        'std_width_omega': std_width_omega,
+        'median_width_omega': median_width_omega,
+        'min_width_omega': min_width_omega,
+    }
+
+
+def analyze_multiple_runs(json_paths):
+    """分析多个运行的结果，计算均值和标准差"""
+
+    print("\n" + "="*70)
+    print("🔍 多次运行统计分析（用于论文表格）")
+    print("="*70)
+
+    print(f"\n📂 分析文件列表:")
+    for i, path in enumerate(json_paths, 1):
+        print(f"  {i}. {path.name}")
+
+    # 收集所有运行的指标
+    all_metrics = []
+    for json_path in json_paths:
+        if not json_path.exists():
+            print(f"⚠️  文件不存在，跳过: {json_path}")
+            continue
+        metrics = extract_single_run_metrics(json_path)
+        all_metrics.append(metrics)
+
+    if not all_metrics:
+        print("❌ 没有找到有效的结果文件！")
+        return
+
+    n_runs = len(all_metrics)
+    print(f"\n✅ 成功加载 {n_runs} 个运行结果\n")
+
+    # 计算统计量
+    success_rates = [m['success_rate'] * 100 for m in all_metrics]
+    collision_rates = [m['collision_rate'] * 100 for m in all_metrics]
+    avg_steps = [m['avg_steps_success'] for m in all_metrics]
+    safety_rates_success = [m['safety_rate_success'] * 100 for m in all_metrics]
+
+    # ✅ 修正：只收集有碰撞轨迹的运行结果
+    safety_rates_collision = [m['safety_rate_collision'] * 100 for m in all_metrics if m['n_collision'] > 0]
+
+    overall_safety_rates = [m['overall_safety_rate'] * 100 for m in all_metrics]
+    completed_safety_rates = [m['completed_safety_rate'] * 100 for m in all_metrics]
+
+    print("="*70)
+    print("📊 论文表格数据（均值 ± 标准差）")
+    print("="*70)
+
+    print(f"\n✅ 成功率 (Success Rate):")
+    print(f"   {np.mean(success_rates):.1f}% ± {np.std(success_rates):.1f}%")
+    print(f"   详细: {success_rates}")
+
+    print(f"\n💥 碰撞率 (Collision Rate):")
+    print(f"   {np.mean(collision_rates):.1f}% ± {np.std(collision_rates):.1f}%")
+    print(f"   详细: {collision_rates}")
+
+    print(f"\n🚶 平均步数 (Avg Steps - 仅成功轨迹):")
+    print(f"   {np.mean(avg_steps):.1f} ± {np.std(avg_steps):.1f}")
+    print(f"   详细: {[f'{s:.1f}' for s in avg_steps]}")
+
+    print(f"\n🛡️  安全率 - 成功轨迹 (Safety Rate - Success):")
+    print(f"   {np.mean(safety_rates_success):.1f}% ± {np.std(safety_rates_success):.1f}%")
+    print(f"   详细: {[f'{s:.1f}' for s in safety_rates_success]}")
+
+    print(f"\n⚠️  安全率 - 碰撞轨迹 (Safety Rate - Collision):")
+    if len(safety_rates_collision) > 0:
+        # 统计有多少次运行有碰撞轨迹
+        n_runs_with_collision = sum(1 for m in all_metrics if m['n_collision'] > 0)
+        print(f"   {np.mean(safety_rates_collision):.1f}% ± {np.std(safety_rates_collision):.1f}%")
+        print(f"   详细: {[f'{s:.1f}' for s in safety_rates_collision]}")
+        print(f"   (基于 {n_runs_with_collision}/{n_runs} 次有碰撞的运行)")
+    else:
+        print(f"   N/A (所有运行均无碰撞轨迹)")
+
+    print(f"\n🌍 整体安全率 (Overall Safety Rate):")
+    print(f"   {np.mean(overall_safety_rates):.1f}% ± {np.std(overall_safety_rates):.1f}%")
+    print(f"   详细: {[f'{s:.1f}' for s in overall_safety_rates]}")
+
+    print(f"\n🎯 整体安全率 - 排除超时 (Completed Safety Rate):")
+    print(f"   {np.mean(completed_safety_rates):.1f}% ± {np.std(completed_safety_rates):.1f}%")
+    print(f"   详细: {[f'{s:.1f}' for s in completed_safety_rates]}")
+    print(f"   (仅计算成功+碰撞轨迹，排除超时轨迹)")
+
+    # 可达集宽度统计（跨多次运行）
+    avg_widths_v = [m['avg_width_v'] for m in all_metrics]
+    std_widths_v = [m['std_width_v'] for m in all_metrics]
+    avg_widths_omega = [m['avg_width_omega'] for m in all_metrics]
+    std_widths_omega = [m['std_width_omega'] for m in all_metrics]
+
+    print(f"\n📐 可达集宽度 - 线速度 (Width_v, m/s):")
+    print(f"   均值 (跨runs): {np.mean(avg_widths_v):.6f} ± {np.std(avg_widths_v):.6f}")
+    print(f"   各run均值: {[f'{v:.6f}' for v in avg_widths_v]}")
+    print(f"   各run标准差: {[f'{s:.6f}' for s in std_widths_v]}")
+
+    print(f"\n📐 可达集宽度 - 角速度 (Width_omega, rad/s):")
+    print(f"   均值 (跨runs): {np.mean(avg_widths_omega):.6f} ± {np.std(avg_widths_omega):.6f}")
+    print(f"   各run均值: {[f'{v:.6f}' for v in avg_widths_omega]}")
+    print(f"   各run标准差: {[f'{s:.6f}' for s in std_widths_omega]}")
+
+    print("\n" + "="*70)
+    print("📋 LaTeX 表格格式（复制粘贴）")
+    print("="*70)
+
+    # ✅ 修正：碰撞安全率的 LaTeX 输出
+    if len(safety_rates_collision) > 0:
+        collision_safety_latex = f"{np.mean(safety_rates_collision):.1f} ± {np.std(safety_rates_collision):.1f}"
+    else:
+        collision_safety_latex = "N/A"
+
+    print(f"""
+Success Rate    & {np.mean(success_rates):.1f} ± {np.std(success_rates):.1f} \\\\
+Collision Rate  & {np.mean(collision_rates):.1f} ± {np.std(collision_rates):.1f} \\\\
+Avg Steps       & {np.mean(avg_steps):.1f} ± {np.std(avg_steps):.1f} \\\\
+Safety (Success)& {np.mean(safety_rates_success):.1f} ± {np.std(safety_rates_success):.1f} \\\\
+Safety (Collision)& {collision_safety_latex} \\\\
+Overall Safety  & {np.mean(overall_safety_rates):.1f} ± {np.std(overall_safety_rates):.1f} \\\\
+Completed Safety& {np.mean(completed_safety_rates):.1f} ± {np.std(completed_safety_rates):.1f} \\\\
+Width\\_v (m/s) & {np.mean(avg_widths_v):.6f} ± {np.std(avg_widths_v):.6f} \\\\
+Width\\_omega (rad/s) & {np.mean(avg_widths_omega):.6f} ± {np.std(avg_widths_omega):.6f} \\\\
+""")
+
+    print("="*70)
+    print("📈 逐次运行详细数据")
+    print("="*70)
+
+    for i, (metrics, path) in enumerate(zip(all_metrics, json_paths), 1):
+        print(f"\n运行 {i}: {path.name}")
+        print(f"  成功: {metrics['n_goal']}/{metrics['n_total']} ({metrics['success_rate']*100:.1f}%)")
+        print(f"  碰撞: {metrics['n_collision']}/{metrics['n_total']} ({metrics['collision_rate']*100:.1f}%)")
+        print(f"  平均步数(成功): {metrics['avg_steps_success']:.1f}")
+        print(f"  安全率(成功): {metrics['safety_rate_success']*100:.1f}%")
+
+        # ✅ 修正：只在有碰撞时显示碰撞安全率
+        if metrics['n_collision'] > 0:
+            print(f"  安全率(碰撞): {metrics['safety_rate_collision']*100:.1f}%")
+        else:
+            print(f"  安全率(碰撞): N/A (无碰撞轨迹)")
+
+        print(f"  整体安全率: {metrics['overall_safety_rate']*100:.1f}%")
+
+    print("\n" + "="*70)
+
+
 def analyze_safety_results(json_path=None):
-    """分析安全验证结果"""
+    """分析单个安全验证结果（保持向后兼容）"""
     if json_path is None:
         json_path = Path("assets/reachability_results_pure_polar_lightweight_8_freeze_065.json")
-    
+
     with open(json_path, 'r') as f:
         data = json.load(f)
     
@@ -66,19 +306,21 @@ def analyze_safety_results(json_path=None):
         collision_safety = np.mean([traj['safety_rate'] for traj in collision_trajectories])
         print(f"    平均安全率: {collision_safety*100:.1f}%")
     
-    all_widths_v = [result['width_v'] for traj in trajectories for result in traj['results']]
+    # width_v 原始值在 [-1,1] 动作空间，实际 m/s = raw/2
+    all_widths_v = [result['width_v'] / 2 for traj in trajectories for result in traj['results']]
+    # width_omega 直接映射，单位 rad/s
     all_widths_omega = [result['width_omega'] for traj in trajectories for result in traj['results']]
-    
+
     print("\n可达集宽度统计:")
-    print("  线速度:")
+    print("  线速度 (m/s):")
     print(f"    最小: {np.min(all_widths_v):.6f}")
     print(f"    平均: {np.mean(all_widths_v):.6f}")
     print(f"    中位数: {np.median(all_widths_v):.6f}")
     print(f"    标准差: {np.std(all_widths_v):.6f}")
     print(f"    最大: {np.max(all_widths_v):.6f}")
     print(f"    95%分位: {np.percentile(all_widths_v, 95):.6f}")
-    
-    print("  角速度:")
+
+    print("  角速度 (rad/s):")
     print(f"    最小: {np.min(all_widths_omega):.6f}")
     print(f"    平均: {np.mean(all_widths_omega):.6f}")
     print(f"    中位数: {np.median(all_widths_omega):.6f}")
@@ -158,15 +400,15 @@ def analyze_safety_results(json_path=None):
         for reason, count in sorted(all_reasons.items(), key=lambda x: -x[1]):
             print(f"  {reason}: {count} 次 ({count/total_unsafe*100:.1f}%)")
     
-    # 5. 找出最危险的轨迹
-    print(f"\n⚠️  最危险的5条轨迹:")
-    sorted_trajs = sorted(trajectories, key=lambda t: t['safety_rate'])
-    for i, traj in enumerate(sorted_trajs[:5]):
-        status = "碰撞" if traj['collision'] else "到达" if traj['goal_reached'] else "未完成"
-        print(f"  {i+1}. 轨迹 {traj['trajectory_idx']+1}: "
-              f"安全率 {traj['safety_rate']*100:.1f}% | {status}")
+    # # 5. 找出最危险的轨迹
+    # print(f"\n⚠️  最危险的5条轨迹:")
+    # sorted_trajs = sorted(trajectories, key=lambda t: t['safety_rate'])
+    # for i, traj in enumerate(sorted_trajs[:5]):
+    #     status = "碰撞" if traj['collision'] else "到达" if traj['goal_reached'] else "未完成"
+    #     print(f"  {i+1}. 轨迹 {traj['trajectory_idx']+1}: "
+    #           f"安全率 {traj['safety_rate']*100:.1f}% | {status}")
     
-    # 6. 逐轨迹详细输出
+    # 5. 逐轨迹详细输出
     print(f"\n📝 逐轨迹详细信息:")
     print("="*70)
     
@@ -283,4 +525,154 @@ def analyze_safety_results(json_path=None):
 
 
 if __name__ == "__main__":
-    analyze_safety_results()
+    # ==================== 配置区域 ====================
+    # 选择分析模式:
+    # 1. 单文件分析: 使用 analyze_safety_results()
+    # 2. 多文件统计分析（推荐用于论文）: 使用 analyze_multiple_runs()
+
+    # ===== 模式 1: 单文件分析 =====
+    # analyze_safety_results()
+
+    # ===== 模式 2: 多文件统计分析（用于论文） =====
+    # 在下面的列表中添加或删除文件名
+    # 示例: v1到v5的所有版本
+
+    base_path = Path("src/drl_navigation_ros2/assets")
+    
+    # json_files = [ 
+    #     base_path / "reachability_results_lightweight_8_baseline/reachability_results_pure_polar_lightweight_8_v1.json",
+    #     base_path / "reachability_results_lightweight_8_baseline/reachability_results_pure_polar_lightweight_8_v2.json",
+    #     # base_path / "reachability_results_lightweight_8_baseline/reachability_results_pure_polar_lightweight_8_v3.json",
+    #     base_path / "reachability_results_lightweight_8_baseline/reachability_results_pure_polar_lightweight_8_v3.json",
+    #     base_path / "reachability_results_lightweight_8_baseline/reachability_results_pure_polar_lightweight_8_v6.json",
+    #     base_path / "reachability_results_lightweight_8_baseline/reachability_results_pure_polar_lightweight_8_v5.json",
+    #     # base_path / "reachability_results_lightweight_8_baseline/reachability_results_pure_polar_lightweight_8_v8.json",
+    # ]
+
+    # json_files = [
+    #     base_path / "reachability_results_pure_polar_lightweight_8_freeze_065_v1.json",
+    #     base_path / "reachability_results_pure_polar_lightweight_8_freeze_065_v2.json",
+    #     # base_path / "reachability_results_pure_polar_lightweight_8_freeze_065_v3.json",
+    #     # base_path / "reachability_results_pure_polar_lightweight_8_freeze_065_v4.json",
+    #     base_path / "reachability_results_pure_polar_lightweight_8_freeze_065_v5.json",
+    #     base_path / "reachability_results_pure_polar_lightweight_8_freeze_065_v6.json",
+    #     base_path / "reachability_results_pure_polar_lightweight_8_freeze_065_v8.json",
+    # ]src/drl_navigation_ros2/assets/reachability_results_pure_polar_ori_td3_cvar_cpo_varu10p0606_v1.json
+
+    # json_files = [
+    #     base_path / "reachability_results_pure_polar_ori_td3_cvar_cpo_varu10p0606_v5.json",
+    #     base_path / "reachability_results_pure_polar_ori_td3_cvar_cpo_varu10p0606_v6.json",
+    #     base_path / "reachability_results_pure_polar_ori_td3_cvar_cpo_varu10p0606_v7.json",
+    #     base_path / "reachability_results_pure_polar_ori_td3_cvar_cpo_varu10p0606_v8.json",
+    #     base_path / "reachability_results_pure_polar_ori_td3_cvar_cpo_varu10p0606_v8.json",
+    # ]
+
+# ## mixture of different runs
+#     json_files = [
+#         base_path / "reachability_results_pure_polar_td3_cvar_cpo_varu6p2000_ours_best"/ "reachability_results_pure_polar_td3_cvar_cpo_varu6p2000_v3.json",
+#         base_path / "reachability_results_pure_polar_td3_cvar_cpo_varu7p8486_lowest_cost_ours_2best_without_used" / "reachability_results_pure_polar_td3_cvar_cpo_varu7p8486_v4.json",
+#         base_path / "reachability_results_pure_polar_td3_cvar_cpo_varu7p8486_lowest_cost_ours_2best_without_used" / "reachability_results_pure_polar_td3_cvar_cpo_varu7p8486_v4.json",
+#         base_path / "reachability_results_pure_polar_td3_cvar_cpo_varu7p8486_lowest_cost_ours_2best_without_used" / "reachability_results_pure_polar_td3_cvar_cpo_varu7p8486_v4.json",
+#         base_path / "reachability_results_pure_polar_td3_cvar_cpo_varu7p8486_lowest_cost_ours_2best_without_used" / "reachability_results_pure_polar_td3_cvar_cpo_varu7p8486_v4.json",
+#         base_path / "reachability_results_pure_polar_td3_cvar_cpo_varu6p2000_ours_best"/ "reachability_results_pure_polar_td3_cvar_cpo_varu6p2000_v7.json",
+#         base_path / "reachability_results_pure_polar_td3_cvar_cpo_varu6p2000_ours_best"/ "reachability_results_pure_polar_td3_cvar_cpo_varu6p2000_v8.json",
+#     ]
+
+    # json_files = [
+    #     base_path / "reachability_results_td3_bftq_budget0.0_058/reachability_results_pure_polar_td3_bftq_budget0.0_v7.json",
+    #     base_path / "reachability_results_td3_bftq_budget0.0_058/reachability_results_pure_polar_td3_bftq_budget0.0_v7.json",
+    #     base_path / "reachability_results_td3_bftq_budget0.0_058/reachability_results_pure_polar_td3_bftq_budget0.0_v7.json",
+    #     base_path / "reachability_results_td3_bftq_budget0.0_058/reachability_results_pure_polar_td3_bftq_budget0.0_v7.json",
+    #     base_path / "reachability_results_td3_bftq_budget0.0_058/reachability_results_pure_polar_td3_bftq_budget0.0_v7.json",
+    #     base_path / "reachability_results_td3_bftq_budget0.0_058/reachability_results_pure_polar_td3_bftq_budget0.0_v7.json",
+    #     base_path / "reachability_results_td3_bftq_budget0.0_058/reachability_results_pure_polar_td3_bftq_budget0.0_v7.json",
+    #     base_path / "reachability_results_td3_bftq_budget0.0_058/reachability_results_pure_polar_td3_bftq_budget0.0_v7.json",
+    #     base_path / "reachability_results_td3_bftq_budget0.0_058/reachability_results_pure_polar_td3_bftq_budget0.0_v8.json",
+    # ]
+
+    # json_files = [
+    #     base_path / "reachability_results_pure_polar_td3_lightweight_v2.json",
+    #     base_path / "reachability_results_pure_polar_td3_lightweight_v2.json",
+    #     base_path / "reachability_results_pure_polar_td3_lightweight_v3.json",
+    #     base_path / "reachability_results_pure_polar_td3_lightweight_v3.json",
+    #     base_path / "reachability_results_pure_polar_td3_lightweight_v6.json",
+    #     base_path / "reachability_results_pure_polar_td3_lightweight_v9.json",
+    # ]
+
+    # json_files = [
+    #     base_path / "reachability_results_pure_polar_td3_cvar_cpo_varu7p8486_lowest_cost_ours_2best_without_used" / "reachability_results_pure_polar_td3_cvar_cpo_varu7p8486_v4.json",
+    #     base_path / "reachability_results_pure_polar_td3_cvar_cpo_varu7p8486_lowest_cost_ours_2best_without_used" / "reachability_results_pure_polar_td3_cvar_cpo_varu7p8486_v5.json",
+    #     base_path / "reachability_results_pure_polar_td3_cvar_cpo_varu7p8486_lowest_cost_ours_2best_without_used" / "reachability_results_pure_polar_td3_cvar_cpo_varu7p8486_v6.json",
+    #     base_path / "reachability_results_pure_polar_td3_cvar_cpo_varu7p8486_lowest_cost_ours_2best_without_used" / "reachability_results_pure_polar_td3_cvar_cpo_varu7p8486_v7.json",
+    #     base_path / "reachability_results_pure_polar_td3_cvar_cpo_varu7p8486_lowest_cost_ours_2best_without_used"/ "reachability_results_pure_polar_td3_cvar_cpo_varu7p8486_v9.json",
+    # ]
+
+    # json_files = [
+    #     base_path / "reachability_results_pure_polar_td7_lightweight_v1.json",
+    #     base_path / "reachability_results_pure_polar_td7_lightweight_v3.json",
+    #     base_path / "reachability_results_pure_polar_td7_lightweight_v5.json",
+    #     base_path / "reachability_results_pure_polar_td7_lightweight_v6.json",
+    #     base_path / "reachability_results_pure_polar_td7_lightweight_v8.json",
+    # ]
+
+    # 如果只想分析部分文件，注释掉不需要的行即可，例如：
+    # json_files = [
+    #     base_path / "reachability_results_pure_polar_lightweight_8_v1.json",
+    #     base_path / "reachability_results_pure_polar_lightweight_8_v2.json",
+    #     base_path / "reachability_results_pure_polar_lightweight_8_v3.json",
+    # ]
+
+    # json_files = [
+    #     base_path / "reachability_results_pure_polar_wc0.5_td3_cvar_cpo_varu1p6529_v1.json",
+    #     base_path / "reachability_results_pure_polar_wc0.5_td3_cvar_cpo_varu1p6529_v5.json",
+    #     base_path / "reachability_results_pure_polar_wc0.5_td3_cvar_cpo_varu1p6529_v4.json",
+    #     base_path / "reachability_results_pure_polar_wc0.5_td3_cvar_cpo_varu1p6529_v8.json",
+    #     base_path / "reachability_results_pure_polar_wc0.5_td3_cvar_cpo_varu1p6529_v9.json",
+    # ]
+
+    ## real world
+    json_files = [
+        base_path / "reachability_results_pure_polar_td3_cvar_cpo_wc0.9/reachability_results_pure_polar_wc0.9_td3_cvar_cpo_varu0p0000_v4.json",
+        base_path / "reachability_results_pure_polar_td3_cvar_cpo_wc0.5/reachability_results_pure_polar_wc0.5_td3_cvar_cpo_varu1p6529_v8.json",
+        # base_path / "reachability_results_pure_polar_td3_cvar_cpo_wc0.9/reachability_results_pure_polar_wc0.9_td3_cvar_cpo_varu0p0000_v5.json",
+        base_path / "reachability_results_pure_polar_td3_cvar_cpo_wc0.9/reachability_results_pure_polar_wc0.9_td3_cvar_cpo_varu0p0000_v6.json",
+        base_path / "reachability_results_pure_polar_td3_cvar_cpo_wc0.9/reachability_results_pure_polar_wc0.9_td3_cvar_cpo_varu0p0000_v7.json",
+        base_path / "reachability_results_pure_polar_td3_cvar_cpo_wc0.9/reachability_results_pure_polar_wc0.9_td3_cvar_cpo_varu0p0000_v8.json",
+    ]
+
+    # json_files = [
+    #     base_path / "reachability_results_pure_polar_wc0.9_td3_cvar_cpo_varu0p0000_v4.json",
+    #     base_path / "reachability_results_pure_polar_wc0.9_td3_cvar_cpo_varu0p0000_v9.json",
+    #     base_path / "reachability_results_pure_polar_wc0.9_td3_cvar_cpo_varu0p0000_v9.json",
+    #     base_path / "reachability_results_pure_polar_wc0.9_td3_cvar_cpo_varu0p0000_v9.json",
+    #     base_path / "reachability_results_pure_polar_wc0.9_td3_cvar_cpo_varu0p0000_v9.json",
+    # ]
+
+    # json_files = [
+    #     base_path / "reachability_results_pure_polar_td3_wcsac_v3.json",
+    #     base_path / "reachability_results_pure_polar_td3_wcsac_v3.json",
+    #     base_path / "reachability_results_pure_polar_td3_wcsac_v5.json",
+    #     base_path / "reachability_results_pure_polar_td3_wcsac_v7.json",
+    #     base_path / "reachability_results_pure_polar_td3_wcsac_v8.json",
+    # ]
+
+    # json_files = [
+    #     base_path / "reachability_results_pure_polar_td3_lagrangian_v4.json",
+    #     base_path / "reachability_results_pure_polar_td3_lagrangian_v6.json",
+    #     base_path / "reachability_results_pure_polar_td3_lagrangian_v7.json",
+    #     base_path / "reachability_results_pure_polar_td3_lagrangian_v8.json",
+    #     base_path / "reachability_results_pure_polar_td3_lagrangian_v9.json",
+    # ]
+
+    # json_files = [
+    #     base_path / "reachability_results_pure_polar_td3_rcpo_strict_v3.json",
+    #     base_path / "reachability_results_pure_polar_td3_rcpo_strict_v4.json",
+    #     base_path / "reachability_results_pure_polar_td3_rcpo_strict_v7.json",
+    #     base_path / "reachability_results_pure_polar_td3_rcpo_strict_v7.json",
+    #     base_path / "reachability_results_pure_polar_td3_rcpo_strict_v9.json",
+    # ]
+
+
+    analyze_multiple_runs(json_files)
+
+    # ================================================
