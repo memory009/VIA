@@ -10,11 +10,23 @@ Deep Reinforcement Learning for mobile robot navigation in ROS2/Gazebo, extended
 <p align="center">
     <img width=65% src="Figs/hero_motivation.png">
 </p>
+<p align="center"><em>Motivation: CVaR-constrained training keeps larger safety margins, while post-training reachable-set verification certifies actions under observation uncertainty.</em></p>
 
 <p align="center">
     <img width=100% src="Figs/flow_overview.png">
 </p>
 <p align="center"><em>Method overview: DRL training &rarr; trajectory collection &rarr; POLAR reachable-set verification.</em></p>
+
+## Contents
+
+- [Attribution](#attribution)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Training](#training)
+- [Post-Training: Trajectory Collection &rarr; Reachable Set Verification](#post-training-trajectory-collection--reachable-set-verification)
+- [Project Structure](#project-structure)
+- [Citation](#citation)
+- [License](#license)
 
 ## Attribution
 
