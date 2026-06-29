@@ -45,11 +45,16 @@ This repository extends the following open-source work:
 
 ## Requirements
 
-- ROS2 Foxy on Ubuntu 20.04
-- Python 3.8.10
-- PyTorch ≥ 1.10
-- TensorBoard
-- sympy, numpy, tqdm
+| Component | Version |
+| --- | --- |
+| OS       | Ubuntu 20.04 |
+| ROS2     | Foxy |
+| Python   | 3.8.10 |
+| PyTorch  | ≥ 1.10 |
+
+**Python packages:** `numpy`, `sympy` (reachable-set verification), `tqdm`, `tensorboard` (training logs)
+
+The ROS2, Gazebo, and TurtleBot3 simulation packages are installed during [Installation](#installation) via `rosdep`.
 
 ## Installation
 
