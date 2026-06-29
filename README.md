@@ -12,11 +12,9 @@ Deep Reinforcement Learning for mobile robot navigation in ROS2/Gazebo, extended
 </p>
 
 <p align="center">
-    <img src="Figs/real_a.png" width="48%">
-    &nbsp;
-    <img src="Figs/real_b.png" width="48%">
+    <img width=100% src="Figs/flow_overview.png">
 </p>
-<p align="center"><em>Real-world deployment on a Clearpath Jackal robot.</em></p>
+<p align="center"><em>Method overview: DRL training &rarr; trajectory collection &rarr; POLAR reachable-set verification.</em></p>
 
 ## Attribution
 
