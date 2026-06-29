@@ -361,7 +361,9 @@ def verify_single_trajectory_worker(args):
     else:
         raise FileNotFoundError(
             f"Obstacle map not found: {obstacle_map_path}\n"
-            f"Run scripts/export_gazebo_map.py first."
+            f"Per-scenario obstacle maps are shipped under "
+            f"assets/eval_scenarios_8_polar/; make sure trajectory_idx "
+            f"matches an available scenario file."
         )
 
     # Sample trajectory states
@@ -516,8 +518,8 @@ Examples:
     #                       collect_trajectories.py
     # =========================================================================
     if model_type == "TD3_Lightweight":
-        model_name = "TD3_lightweight_best"  # e.g. "TD3_lightweight_best"
-        model_path = project_root / "models" / "TD3_lightweight" / "<your_run_id>"
+        model_name = "TD3_best"  # matches train.py (saves "<model_name>_best_*.pth")
+        model_path = project_root / "models" / "TD3" / "<your_run_id>"
         trajectory_path = project_root / "assets" / f"<your_trajectory_file>_{trajectory_version}.pkl"
     elif model_type == "TD3_VIA":
         model_name = "TD3_VIA_best"  # e.g. "TD3_VIA_best"

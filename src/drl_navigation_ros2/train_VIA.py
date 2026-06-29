@@ -144,7 +144,7 @@ def main(args=None):
     model_dir_name = "TD3_VIA"
     model_name = "TD3_VIA"
 
-    save_directory = Path("models") / model_dir_name / run_id
+    save_directory = Path("src/drl_navigation_ros2/models") / model_dir_name / run_id
     save_directory.mkdir(parents=True, exist_ok=True)
 
     log_file = save_directory / "train_output.log"

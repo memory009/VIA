@@ -1,6 +1,6 @@
 # DRL Robot Navigation with Reachability-Based Safety Verification
 
-Deep Reinforcement Learning for mobile robot navigation in ROS2/Gazebo, extended with VIA (CVaR-Constrained Policy Optimization) for safe navigation and POLAR-based reachable set verification.
+Deep Reinforcement Learning for mobile robot navigation in ROS2/Gazebo, extended with **VIA** (*Verification-Informed safe reinforcement learning for Autonomous navigation*) — a CVaR-constrained safe policy paired with POLAR-based post-training reachable set verification.
 
 > 📢 **Accepted at IROS 2026.** This repository accompanies our paper *"Safety-Constrained Reinforcement Learning with Post-Training Reachability Verification for Robot Navigation"* ([arXiv:2605.14174](https://arxiv.org/abs/2605.14174)). If you use this code, please [cite our work](#citation).
 
@@ -39,9 +39,14 @@ This repository extends the following open-source work:
 **Extensions in this repository:**
 
 - `TD3_lightweight`: compact TD3 (hidden_dim=26) compatible with POLAR reachability verification
-- `TD3_VIA`: TD3 with VIA (CVaR-Constrained Policy Optimization) for safe DRL navigation
+- `TD3_VIA`: TD3 with VIA's CVaR-constrained safety objective (augmented state s̄ = (s, eₜ), noncrossing quantile cost critic) for safe DRL navigation
 - POLAR reachable set computation via Taylor Model arithmetic and Bernstein polynomial approximation
 - Trajectory collection and parallel verification pipeline
+
+**Scope of this repository.** This code covers the Gazebo/TurtleBot3 **simulation** training and the
+post-training reachability verification for our method (`TD3_VIA`) and the `TD3_lightweight` baseline.
+The other baselines reported in the paper (TD7, SAC-Lagrangian, RCPO, WCSAC, CVaR-CPO) and the
+real-world sim-to-real experiments on the **Clearpath Jackal** are not included here.
 
 ## Requirements
 
@@ -52,7 +57,7 @@ This repository extends the following open-source work:
 | Python   | 3.8.10 |
 | PyTorch  | ≥ 1.10 |
 
-**Python packages:** `numpy`, `sympy` (reachable-set verification), `tqdm`, `tensorboard` (training logs)
+**Python packages:** `torch` (≥ 1.10), `numpy`, `sympy` (reachable-set verification), `squaternion` (ROS pose conversion), `tqdm`, `tensorboard` (training logs)
 
 The ROS2, Gazebo, and TurtleBot3 simulation packages are installed during [Installation](#installation) via `rosdep`.
 
@@ -124,7 +129,7 @@ Model weights are saved to (filename prefix `TD3_VIA`, e.g. `TD3_VIA_actor.pth`)
 src/drl_navigation_ros2/models/TD3_VIA/<run_id>/TD3_VIA_*.pth
 ```
 
-> **Note:** when run from the repository root, `train_VIA.py` writes to `./models/TD3_VIA/<run_id>/` **relative to the working directory**. Move (or symlink) that `<run_id>` folder into `src/drl_navigation_ros2/models/TD3_VIA/` before verification, since the verification scripts resolve `models/` under `src/drl_navigation_ros2/`.
+Both `train.py` and `train_VIA.py` save under `src/drl_navigation_ros2/models/<model>/<run_id>/`, which is exactly where the verification scripts look for weights — no manual move required.
 
 **Monitor training** (either model):
 ```bash
@@ -143,7 +148,7 @@ Edit the **User Configuration** block at the top of the script:
 # src/drl_navigation_ros2/scripts/collect_trajectories.py
 
 model_type  = "TD3_Lightweight"           # "TD3_Lightweight" or "TD3_VIA"
-model_name  = "TD3"                        # filename prefix of the saved weights
+model_name  = "TD3_best"                   # filename prefix of the saved weights (TD3_best_*.pth)
 model_dir   = project_root / "models" / "TD3" / "<your_run_id>"
 output_name = "trajectories_td3_v1"       # output filename (saved as assets/<output_name>.pkl)
 ```
@@ -168,12 +173,12 @@ Edit the **User Configuration** block in the verification script:
 # src/drl_navigation_ros2/scripts/reachable_set_verification.py  (lines ~510-525)
 
 # For TD3_Lightweight:
-model_name      = "TD3"
+model_name      = "TD3_best"     # train.py saves the best checkpoint as TD3_best_*.pth
 model_path      = project_root / "models" / "TD3" / "<your_run_id>"
 trajectory_path = project_root / "assets" / "<your_trajectory_file>_v1.pkl"
 
 # For TD3_VIA:
-model_name      = "TD3_VIA"
+model_name      = "TD3_VIA_best"  # train_VIA.py saves the best checkpoint as TD3_VIA_best_*.pth
 model_path      = project_root / "models" / "TD3_VIA" / "<your_run_id>"
 trajectory_path = project_root / "assets" / "<your_trajectory_file>_v1.pkl"
 ```
@@ -194,7 +199,7 @@ python3 src/drl_navigation_ros2/scripts/reachable_set_verification.py \
     --model-type TD3_VIA --version v1 --e-t 5.0
 ```
 
-The script runs verification in parallel across CPU cores. Output includes per-trajectory safety rates and an aggregate **Action Safety Rate (ASR)**.
+The script runs verification in parallel across CPU cores. Output includes per-trajectory safety rates and an aggregate **Safety Rate** — the proportion of evaluated states whose reachable action set stays within the safety margin under bounded observation uncertainty (the metric reported in the paper).
 
 ## Project Structure
 
@@ -208,21 +213,28 @@ src/drl_navigation_ros2/
 │   └── TD3.py                      # Original full-size TD3 (reference)
 ├── replay_buffer.py                # Standard replay buffer
 ├── via_replay_buffer.py            # VIA replay buffer (8-tuple with e_t tracking)
-├── ros_python.py                   # ROS2/Gazebo environment wrapper
-├── pretrain_utils.py               # Pre-training from offline data
+├── ros_python.py                   # ROS2/Gazebo environment wrapper (ROS_env)
+├── ros_nodes.py                    # ROS2 publisher/subscriber nodes used by ros_python.py
+├── pretrain_utils.py               # Pre-training from an offline buffer (assets/data.yml)
 ├── utils.py                        # Evaluation scenario utilities
 ├── scripts/
 │   ├── collect_trajectories.py     # Collect rollout trajectories from a trained model
 │   └── reachable_set_verification.py  # Parallel POLAR reachable set verification
 ├── verification/
-│   ├── taylor_model.py             # Taylor Model arithmetic core
+│   ├── taylor_model.py             # Taylor Model arithmetic core (used by the verifier)
 │   ├── polar_verifier.py           # POLAR layer-by-layer propagation
 │   └── ray_casting.py              # Laser scan prediction via ray-box intersection
 └── assets/
-    ├── data.yml                    # Pre-training offline data
-    ├── eval_scenarios_*.json       # Fixed evaluation scenario configurations
-    └── obstacle_map.json           # Environment obstacle geometry for ray casting
+    ├── data.yml                    # Offline buffer for warm-start pre-training (train.py)
+    ├── eval_scenarios_8_polar.json # Combined evaluation scenarios (collect_trajectories.py)
+    ├── obstacle_map.json           # Single-map geometry for verification/ray_casting.py
+    └── eval_scenarios_8_polar/     # Per-scenario obstacle maps for verification
+        └── obstacle_map_scenario_00..09.json
 ```
+
+> **Note on `data.yml`.** This is a ~39 MB offline replay buffer used by `train.py` to warm-start
+> training (`load_saved_buffer = True`). To train the baseline from scratch instead, set
+> `load_saved_buffer = False` in `train.py`.
 
 ## Citation
 
