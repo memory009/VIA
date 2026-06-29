@@ -160,3 +160,10 @@ visualizations/
 
 # Trained model weights
 src/drl_navigation_ros2/models/
+
+# JetBrains IDE
+.idea/
+
+# Paper figure sources (kept local, not published)
+Figs/*.pdf
+Figs/*.tex

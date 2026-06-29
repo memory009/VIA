@@ -2,15 +2,20 @@
 
 Deep Reinforcement Learning for mobile robot navigation in ROS2/Gazebo, extended with VIA (CVaR-Constrained Policy Optimization) for safe navigation and POLAR-based reachable set verification.
 
+> 📢 **Accepted at IROS 2026.** This repository accompanies our paper *"Safety-Constrained Reinforcement Learning with Post-Training Reachability Verification for Robot Navigation"* ([arXiv:2605.14174](https://arxiv.org/abs/2605.14174)). If you use this code, please [cite our work](#citation).
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![arXiv](https://img.shields.io/badge/arXiv-2605.14174-b31b1b.svg)](https://arxiv.org/abs/2605.14174)
+
 <p align="center">
-    <img width=100% src="https://github.com/reiniscimurs/DRL-Robot-Navigation-ROS2/blob/main/gif.gif">
+    <img width=100% src="Figs/hero_motivation.png">
 </p>
 
 ## Attribution
 
 This repository extends the following open-source work:
 
-- **Base codebase**: [reiniscimurs/DRL-Robot-Navigation-ROS2](https://github.com/reiniscimurs/DRL-Robot-Navigation-ROS2) — ROS2 DRL navigation framework (TD3/SAC, Gazebo)
+- **Base codebase & simulation environment**: [reiniscimurs/DRL-Robot-Navigation-ROS2](https://github.com/reiniscimurs/DRL-Robot-Navigation-ROS2) — ROS2 DRL navigation framework (TD3/SAC, Gazebo). Our Gazebo/TurtleBot3 simulation setup follows this repository; please refer to it for environment installation and configuration details.
 - **ROS2 adaptation**: [tomasvr/turtlebot3_drlnav](https://github.com/tomasvr/turtlebot3_drlnav)
 - **TD3 implementation**: [reiniscimurs/DRL-robot-navigation](https://github.com/reiniscimurs/DRL-robot-navigation)
 
@@ -32,8 +37,8 @@ This repository extends the following open-source work:
 ## Installation
 
 ```bash
-git clone <this-repo>
-cd DRL-Robot-Navigation-ROS2
+git clone https://github.com/memory009/VIA.git
+cd VIA
 
 sudo apt install python3-rosdep2
 rosdep update
@@ -194,3 +199,25 @@ src/drl_navigation_ros2/
     ├── eval_scenarios_*.json       # Fixed evaluation scenario configurations
     └── obstacle_map.json           # Environment obstacle geometry for ray casting
 ```
+
+## Citation
+
+If you find this work useful, please cite our paper:
+
+```bibtex
+@inproceedings{he2026safety,
+  title     = {Safety-Constrained Reinforcement Learning with Post-Training Reachability Verification for Robot Navigation},
+  author    = {He, Qisong and Huang, Xinmiao and Hu, Jinwei and Li, Zhuoyun and Dong, Yi and Wu, Changshun and Huang, Xiaowei},
+  booktitle = {2026 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)},
+  year      = {2026},
+  eprint    = {2605.14174},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.RO}
+}
+```
+
+## License
+
+This project is released under the [MIT License](LICENSE).
+
+It builds on [reiniscimurs/DRL-Robot-Navigation-ROS2](https://github.com/reiniscimurs/DRL-Robot-Navigation-ROS2) (MIT), [tomasvr/turtlebot3_drlnav](https://github.com/tomasvr/turtlebot3_drlnav), and [reiniscimurs/DRL-robot-navigation](https://github.com/reiniscimurs/DRL-robot-navigation). Please also respect the licenses of these upstream projects.
