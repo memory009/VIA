@@ -56,8 +56,8 @@ Set up environment variables (add to `~/.bashrc` or run each session):
 
 ```bash
 export ROS_DOMAIN_ID=1
-export DRLNAV_BASE_PATH=~/DRL-Robot-Navigation-ROS2
-export GAZEBO_MODEL_PATH=$GAZEBO_MODEL_PATH:~/DRL-Robot-Navigation-ROS2/src/turtlebot3_simulations/turtlebot3_gazebo/models
+export DRLNAV_BASE_PATH=~/VIA
+export GAZEBO_MODEL_PATH=$GAZEBO_MODEL_PATH:~/VIA/src/turtlebot3_simulations/turtlebot3_gazebo/models
 export TURTLEBOT3_MODEL=waffle
 source /opt/ros/foxy/setup.bash
 source install/setup.bash
@@ -85,9 +85,9 @@ python3 src/drl_navigation_ros2/train.py
 python3 src/drl_navigation_ros2/train.py --max-epochs 100 --episodes-per-epoch 70
 ```
 
-Model weights are saved to:
+Model weights are saved to (filename prefix `TD3`, e.g. `TD3_actor.pth`):
 ```
-src/drl_navigation_ros2/models/TD3/<run_id>/TD3_best_*.pth
+src/drl_navigation_ros2/models/TD3/<run_id>/TD3_*.pth
 ```
 
 ### VIA: Safe Navigation with CVaR Constraint
@@ -102,10 +102,12 @@ python3 src/drl_navigation_ros2/train_VIA.py
 python3 src/drl_navigation_ros2/train_VIA.py --max-epochs 100 --episodes-per-epoch 70
 ```
 
-Model weights are saved to:
+Model weights are saved to (filename prefix `TD3_VIA`, e.g. `TD3_VIA_actor.pth`):
 ```
-src/drl_navigation_ros2/models/TD3_VIA/<run_id>/TD3_VIA_best_*.pth
+src/drl_navigation_ros2/models/TD3_VIA/<run_id>/TD3_VIA_*.pth
 ```
+
+> **Note:** when run from the repository root, `train_VIA.py` writes to `./models/TD3_VIA/<run_id>/` **relative to the working directory**. Move (or symlink) that `<run_id>` folder into `src/drl_navigation_ros2/models/TD3_VIA/` before verification, since the verification scripts resolve `models/` under `src/drl_navigation_ros2/`.
 
 **Monitor training** (either model):
 ```bash
@@ -124,8 +126,8 @@ Edit the **User Configuration** block at the top of the script:
 # src/drl_navigation_ros2/scripts/collect_trajectories.py
 
 model_type  = "TD3_Lightweight"           # "TD3_Lightweight" or "TD3_VIA"
-model_name  = "TD3_lightweight_best"      # filename prefix of the saved weights
-model_dir   = project_root / "models" / "TD3_lightweight" / "<your_run_id>"
+model_name  = "TD3"                        # filename prefix of the saved weights
+model_dir   = project_root / "models" / "TD3" / "<your_run_id>"
 output_name = "trajectories_td3_v1"       # output filename (saved as assets/<output_name>.pkl)
 ```
 
@@ -149,12 +151,12 @@ Edit the **User Configuration** block in the verification script:
 # src/drl_navigation_ros2/scripts/reachable_set_verification.py  (lines ~510-525)
 
 # For TD3_Lightweight:
-model_name      = "TD3_lightweight_best"
-model_path      = project_root / "models" / "TD3_lightweight" / "<your_run_id>"
+model_name      = "TD3"
+model_path      = project_root / "models" / "TD3" / "<your_run_id>"
 trajectory_path = project_root / "assets" / "<your_trajectory_file>_v1.pkl"
 
 # For TD3_VIA:
-model_name      = "TD3_VIA_best"
+model_name      = "TD3_VIA"
 model_path      = project_root / "models" / "TD3_VIA" / "<your_run_id>"
 trajectory_path = project_root / "assets" / "<your_trajectory_file>_v1.pkl"
 ```
