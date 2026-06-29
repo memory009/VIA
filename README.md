@@ -8,8 +8,15 @@ Deep Reinforcement Learning for mobile robot navigation in ROS2/Gazebo, extended
 [![arXiv](https://img.shields.io/badge/arXiv-2605.14174-b31b1b.svg)](https://arxiv.org/abs/2605.14174)
 
 <p align="center">
-    <img width=100% src="Figs/hero_motivation.png">
+    <img width=65% src="Figs/hero_motivation.png">
 </p>
+
+<p align="center">
+    <img src="Figs/real_a.png" width="48%">
+    &nbsp;
+    <img src="Figs/real_b.png" width="48%">
+</p>
+<p align="center"><em>Real-world deployment on a Clearpath Jackal robot.</em></p>
 
 ## Attribution
 
